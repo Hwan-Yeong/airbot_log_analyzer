@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 
 from PySide6.QtCore import QDate, QDateTime, QPointF, QRectF, QRegularExpression, Qt, QTime, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QRegularExpressionValidator
-from PySide6.QtWidgets import (QComboBox, QDateTimeEdit, QHBoxLayout, QLabel, QPushButton, QStyle, QToolTip,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDateTimeEdit, QHBoxLayout, QLabel, QPushButton, QStyle, QVBoxLayout,
+                               QWidget)
 
 from . import style
 
@@ -28,6 +28,7 @@ class TimelineBar(QWidget):
         self.marks = []          # (vt, kind, label)
         self.time_text = None    # vt -> 표시 문자열
         self._drag = False
+        self._hover = None       # (x, 문구) - 툴팁 팝업 대신 막대 위에 직접 그림 (wayland 팝업 충돌 방지)
 
     def set_range(self, vt_end: float):
         self.vt_end = max(vt_end, 1e-6)
@@ -83,6 +84,19 @@ class TimelineBar(QWidget):
         p.setPen(QPen(QColor(t.window), 2))
         p.setBrush(QColor(t.tl_handle))
         p.drawEllipse(QPointF(x, cy), 7, 7)
+        if self._hover is not None:
+            hx, text = self._hover
+            p.setPen(QPen(QColor(t.hint), 1, Qt.DotLine))
+            p.drawLine(QPointF(hx, 12), QPointF(hx, h - 2))
+            f.setPointSize(8)
+            p.setFont(f)
+            tw = p.fontMetrics().horizontalAdvance(text) + 10
+            bx = min(max(hx - tw / 2, 0), w - tw)
+            p.setPen(QPen(QColor(t.border), 1))
+            p.setBrush(QColor(t.base))
+            p.drawRoundedRect(QRectF(bx, 0, tw, 15), 3, 3)
+            p.setPen(QColor(t.text))
+            p.drawText(QRectF(bx, 0, tw, 15), Qt.AlignCenter, text)
         p.end()
 
     def mousePressEvent(self, e):
@@ -96,8 +110,13 @@ class TimelineBar(QWidget):
             self.seek.emit(vt)
         if self.time_text:
             near = [lbl for v, k, lbl in self.marks if k != "day" and abs(self._x(v) - e.position().x()) < 4]
-            tip = self.time_text(vt) + ("\n" + "\n".join(near[:5]) if near else "")
-            QToolTip.showText(e.globalPosition().toPoint(), tip, self)
+            text = self.time_text(vt) + (f"  ·  {near[0][:40]}" if near else "")
+            self._hover = (e.position().x(), text)
+            self.update()
+
+    def leaveEvent(self, _e):
+        self._hover = None
+        self.update()
 
     def mouseReleaseEvent(self, _e):
         self._drag = False

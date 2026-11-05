@@ -7,11 +7,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QGridLayout, QLabel, QMainWindow, QMessageBox,
-                               QProgressBar, QScrollArea, QSplitter, QStyle, QTabWidget, QToolBar, QVBoxLayout,
-                               QWidget)
+                               QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QStyle, QTabWidget,
+                               QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from .. import APP_NAME, __version__
 from ..loader import load_session
@@ -216,13 +216,29 @@ class MainWindow(QMainWindow):
         act(QStyle.SP_FileIcon, "이벤트 CSV", self.export_csv, None, "현재 필터의 이벤트 목록을 CSV 로 저장")
         tb.addSeparator()
         act(QStyle.SP_ComputerIcon, "NAS 경로", self.edit_nas_path, None, "NAS 경로 설정")
-        self.act_dark = QAction("다크 모드", self)
-        self.act_dark.setCheckable(True)
-        self.act_dark.setChecked(style.T().dark)
-        self.act_dark.setToolTip("라이트 / 다크 테마 전환")
-        self.act_dark.toggled.connect(lambda on: self.apply_theme("dark" if on else "light"))
-        tb.addAction(self.act_dark)
         act(QStyle.SP_MessageBoxInformation, "정보", self.show_about)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(spacer)
+        # 테마: 아이콘 클릭 = 라이트/다크 전환, 화살표 = 메뉴에서 선택
+        self.btn_theme = QToolButton()
+        self.btn_theme.setPopupMode(QToolButton.MenuButtonPopup)
+        self.btn_theme.setIconSize(QSize(20, 20))
+        self.btn_theme.setToolTip("테마 (아이콘: 전환, 화살표: 선택)")
+        menu = QMenu(self.btn_theme)
+        group = QActionGroup(self)
+        self.theme_actions = {}
+        for key, label in (("light", "라이트"), ("dark", "다크")):
+            a = QAction(style.theme_icon(key), label, self)
+            a.setCheckable(True)
+            a.triggered.connect(lambda _=False, k=key: self.apply_theme(k))
+            group.addAction(a)
+            menu.addAction(a)
+            self.theme_actions[key] = a
+        self.btn_theme.setMenu(menu)
+        self.btn_theme.clicked.connect(lambda: self.apply_theme("light" if style.T().dark else "dark"))
+        tb.addWidget(self.btn_theme)
+        self._update_theme_button()
 
         for key, fn in (("Space", self.toggle_play), ("Left", lambda: self.step_event(-1)),
                         ("Right", lambda: self.step_event(1)), ("Home", lambda: self.set_vt(0.0, "seek")),
@@ -354,8 +370,14 @@ class MainWindow(QMainWindow):
             mv.update_frame(self.vt, lp.history_sec())
 
     # ---- 테마
+    def _update_theme_button(self):
+        cur = style.T().name
+        self.btn_theme.setIcon(style.theme_icon(cur))
+        self.theme_actions[cur].setChecked(True)
+
     def apply_theme(self, name: str):
         style.apply_style(QApplication.instance(), name)
+        self._update_theme_button()
         lp = self.layer_panel
         self.map_view.apply_theme({"keepout": lp.chk_keepout.isChecked(), "station": lp.chk_station.isChecked()})
         self.playbar.bar.update()

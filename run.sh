@@ -20,4 +20,19 @@ if [ ! -x .venv/bin/python ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$REQ_HASH" ]
   .venv/bin/python -m pip install -q -r requirements.txt
   echo "$REQ_HASH" > "$STAMP"
 fi
+# WSL(WSLg): wayland 에서는 Qt 드롭다운·메뉴 팝업이 가끔 바로 닫힘 → X11(xcb) 우선, 안 되면 wayland 로 자동 전환
+if [ -n "${WSL_DISTRO_NAME:-}" ] && [ -z "${QT_QPA_PLATFORM:-}" ]; then
+  export QT_QPA_PLATFORM="xcb;wayland"
+  if ! ldconfig -p 2>/dev/null | grep -q "libxcb-cursor.so.0"; then
+    XCB_DIR=".venv/xcb-libs"     # xcb 에 필요한 libxcb-cursor 를 sudo 없이 .venv 안에 준비
+    if [ -z "$(find "$XCB_DIR" -name 'libxcb-cursor.so.0' 2>/dev/null | head -1)" ]; then
+      ( mkdir -p "$XCB_DIR" && cd "$XCB_DIR" && apt-get download libxcb-cursor0 >/dev/null 2>&1 \
+        && dpkg-deb -x libxcb-cursor0_*.deb . && rm -f libxcb-cursor0_*.deb ) || true
+    fi
+    LIB="$(find "$XCB_DIR" -name 'libxcb-cursor.so.0' 2>/dev/null | head -1)"
+    if [ -n "$LIB" ]; then
+      export LD_LIBRARY_PATH="$PWD/$(dirname "$LIB")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+  fi
+fi
 exec .venv/bin/python run.py "$@"

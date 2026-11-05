@@ -3,9 +3,11 @@
 화면 요소는 그릴 때 style.T() 로 현재 테마 색을 읽는다. 테마를 바꾸면 MainWindow.apply_theme() 가
 각 위젯을 다시 그리게 한다.
 """
+import math
 from dataclasses import dataclass
 
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QApplication
 
 UI_FONTS = ["Malgun Gothic", "맑은 고딕", "Noto Sans KR", "Noto Sans CJK KR", "NanumGothic", "Apple SD Gothic Neo"]
@@ -180,6 +182,34 @@ def apply_style(app: QApplication, theme: str = "light"):
     font.setPointSize(9)
     app.setFont(font)
     app.setStyleSheet(_qss(_current))
+
+
+def theme_icon(name: str) -> QIcon:
+    """테마 아이콘: 라이트 = 해, 다크 = 달 (글꼴과 무관하게 직접 그림)."""
+    pm = QPixmap(64, 64)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    if name == "dark":
+        moon = QPainterPath()
+        moon.addEllipse(QPointF(29, 35), 23, 23)
+        cut = QPainterPath()
+        cut.addEllipse(QPointF(43, 23), 20, 20)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#7986cb"))
+        p.drawPath(moon.subtracted(cut))
+    else:
+        col = QColor("#f9a825")
+        p.setPen(QPen(col, 5, Qt.SolidLine, Qt.RoundCap))
+        for i in range(8):
+            a = math.radians(i * 45)
+            p.drawLine(QPointF(32 + 20 * math.cos(a), 32 + 20 * math.sin(a)),
+                       QPointF(32 + 28 * math.cos(a), 32 + 28 * math.sin(a)))
+        p.setPen(Qt.NoPen)
+        p.setBrush(col)
+        p.drawEllipse(QPointF(32, 32), 13, 13)
+    p.end()
+    return QIcon(pm)
 
 
 def mono_font(size: int = 9) -> QFont:
