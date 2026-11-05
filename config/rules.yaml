@@ -1,0 +1,468 @@
+# ============================================================================
+# 로봇 로그 해석 규칙
+#   로그 한 줄 형식: [YYYY-MM-DD HH:MM:SS.mmm] [노드] [레벨] 메시지
+#   규칙을 추가/수정하면 코드 수정 없이 이벤트 목록·맵 마커·HUD 에 반영된다.
+#
+# 규칙 필드
+#   id        고유 ID
+#   node      노드 이름 (지정 시 그 노드 줄에서만 검사 → 빠름)
+#   levels    로그 레벨 제한 (예: [ERROR])
+#   contains  이 문자열(목록이면 모두)이 메시지에 있을 때만 정규식 검사 (속도용)
+#   regex     Python 정규식. 이름 그룹 사용 (x, y, yaw, code ...). %F = 실수
+#   category  이벤트 분류 (categories 의 id)
+#   text      목록에 표시할 문구 ({그룹이름} 치환)
+#   level     info | warn | error (목록 색상)
+#   layer     맵 마커 레이어 (x, y 그룹 필요. 없으면 at_robot: true → 로봇 위치에 표시)
+#   track     상태 값 추적 이름 (HUD/요약에 사용), value 로 값 지정
+#   list      false 면 이벤트 목록에 넣지 않음 (기본 true)
+#   list_on_change  true 면 track 값이 바뀔 때만 목록에 넣음
+#   continuation    true 면 타임스탬프 없는 이어진 줄에서 검사 (배터리 상세 등)
+#   dedupe_sec      같은 문구가 이 시간 안에 반복되면 생략
+#   dedupe_by       text(기본) | rule  — rule 이면 문구가 달라도 같은 규칙이면 생략
+#   dedupe_pos      true 면 같은 좌표/값 마커는 한 번만
+#   kind      pose | error | error_reset | boot (특수 처리, 생략 시 일반 이벤트)
+# ============================================================================
+
+pose:
+  node: udp_interface
+  contains: Current RobotPose
+  regex: 'Current RobotPose \[\d+\]\((?P<x>%F), (?P<y>%F), (?P<yaw>%F)\(deg\)\)'
+
+categories:
+  - {id: state,   name: 상태,      color: '#7b1fa2'}
+  - {id: command, name: 명령,      color: '#1565c0'}
+  - {id: nav,     name: 주행,      color: '#2e7d32'}
+  - {id: error,   name: 에러,      color: '#c62828'}
+  - {id: dock,    name: 도킹,      color: '#00838f'}
+  - {id: sensor,  name: 센서,      color: '#ef6c00'}
+  - {id: loc,     name: 위치추정,  color: '#6d4c41'}
+  - {id: system,  name: 시스템,    color: '#455a64'}
+  - {id: battery, name: 배터리,    color: '#827717', visible: false}
+  - {id: mcu,     name: MCU 플래그, color: '#78909c', visible: false}
+
+layers:
+  - {id: target,    name: 주행 목표,      shape: cross,    color: '#2e7d32', size: 14}
+  - {id: error,     name: 에러 발생 위치, shape: triangle, color: '#d32f2f', size: 15}
+  - {id: cliff,     name: 낙하 감지,      shape: rect,     color: '#d81b60', size: 9}
+  - {id: tof,       name: 1D ToF 장애물,  shape: diamond,  color: '#ff7043', size: 8}
+  - {id: low_obs,   name: 낮은 장애물,    shape: rect,     color: '#8e24aa', size: 7}
+  - {id: camera,    name: 카메라 장애물,  shape: label,    color: '#ffa000', size: 11, label: cls}
+  - {id: collision, name: 충돌,           shape: diamond,  color: '#039be5', size: 9}
+  - {id: step,      name: 단차(바닥 ToF),  shape: circle,   color: '#5e35b1', size: 6, visible: false}
+
+rules:
+  # ---------------------------------------------------------------- 시스템
+  - id: boot
+    kind: boot
+    category: system
+    node: airbot_logging
+    contains: node initialized
+    regex: 'node initialized'
+    text: '시스템 시작 (부팅)'
+    level: warn
+  - id: reboot
+    category: system
+    node: udp_interface
+    contains: start-Reboot
+    regex: 'start-Reboot'
+    text: '재부팅 실행'
+    level: warn
+  - id: sw_version
+    category: system
+    node: heartbeat_check
+    contains: Expected software version
+    regex: 'Expected software version: (?P<v>\S+)'
+    track: sw_version
+    value: '{v}'
+    list: false
+  - id: nodes_missing
+    category: system
+    node: heartbeat_check
+    contains: Some nodes missing
+    regex: 'Some nodes missing'
+    text: '하트비트: 필수 노드 누락 (재시도)'
+    level: warn
+  - id: node_not_running
+    category: system
+    node: airbot_node_manager
+    contains: is NOT running
+    regex: 'Required node \[(?P<n>[^\]]+)\] is NOT running'
+    text: '노드 미구동: {n}'
+    level: error
+    dedupe_sec: 300
+  - id: process_start
+    category: system
+    node: airbot_node_manager
+    contains: Process started successfully
+    regex: '(?P<what>[\w ]+), Process started successfully with PID: (?P<pid>\d+)'
+    text: '프로세스 시작: {what} (PID {pid})'
+  - id: node_switch
+    category: system
+    node: airbot_node_manager
+    contains: Received goal request with require_node
+    regex: 'require_node: (?P<n>\w+)'
+    text: '노드 구성 전환 요청: {n}'
+  - id: soc_comm_lost
+    category: system
+    node: udp_interface
+    contains: DockingStatus request from SOC not received
+    regex: 'not received for (?P<sec>\d+) seconds\.\s*STATE\[(?P<st>\w+)\]'
+    text: 'SOC 통신 끊김: DockingStatus {sec}초 미수신 (상태 {st})'
+    level: error
+  - id: memory
+    node: airbot_error_monitor
+    contains: Memory Usage
+    regex: 'Memory Usage: (?P<p>[\d.]+)%'
+    track: memory
+    value: '{p}%'
+    list: false
+  - id: soc_temp
+    node: udp_interface
+    contains: 'resSocTemperatureNotice] soc:'
+    regex: 'soc:(?P<soc>-?\d+)'
+    track: soc_temp
+    value: '{soc}°C'
+    list: false
+  - id: fan
+    category: system
+    node: udp_interface
+    contains: Fan state changed
+    regex: 'Fan state changed to \[(?P<a>\w+)\] => \[(?P<b>\w+)\]'
+    text: '팬 {a} → {b}'
+
+  # ---------------------------------------------------------------- 상태
+  - id: state_change
+    category: state
+    node: state_manager
+    contains: EXIT STATE
+    regex: 'EXIT STATE: \[(?P<a>\w+)\] -> Transition by SOC:\[(?P<soc>\w+)\]\|ROBOT:\[(?P<robot>\w+)\] -> RUN STATE: \[(?P<b>\w+)\]'
+    text: '{a} → {b}  (SOC:{soc} / ROBOT:{robot})'
+  - id: robot_state
+    node: state_manager
+    contains: SET ROBOT_STATE
+    regex: 'SET ROBOT_STATE STATE : (?P<v>\w+)'
+    track: robot_state
+    value: '{v}'
+    list: false
+  - id: navi_state
+    node: state_manager
+    contains: SET NAVI_STATE
+    regex: 'SET NAVI_STATE STATE : (?P<v>\w+)'
+    track: navi_state
+    value: '{v}'
+    list: false
+  - id: robot_status
+    node: state_manager
+    contains: SET ROBOT_STATUS
+    regex: 'SET ROBOT_STATUS STATUS : (?P<v>\w+)'
+    track: robot_status
+    value: '{v}'
+    list: false
+  - id: follow_status
+    category: state
+    node: state_manager
+    contains: '==> Cur Status'
+    regex: 'Pre Status : (?P<a>\w+) ==> Cur Status : (?P<b>\w+)'
+    text: '팔로우 {a} → {b}'
+    track: follow
+    value: '{b}'
+
+  # ---------------------------------------------------------------- 명령
+  - id: soc_cmd
+    category: command
+    node: udp_interface
+    contains: soc-cmd received
+    regex: 'soc-cmd received : (?P<cmd>.+?)\s*$'
+    text: 'SOC 명령: {cmd}'
+  - id: cmd_rejected
+    category: command
+    node: state_manager
+    contains: is not possible in state
+    regex: '(?P<who>soc|robot)-cmd : \[(?!VOID\])(?P<cmd>\w+)\] is not possible in state : \[(?P<st>\w+)\]'
+    text: '{who} 명령 거부: {cmd} (현재 {st})'
+    level: warn
+
+  # ---------------------------------------------------------------- 주행
+  - id: nav_goal
+    category: nav
+    node: state_manager
+    contains: '[moveToTarget]'
+    regex: 'send goal\((?P<x>%F), (?P<y>%F), (?P<yaw>%F)\(DEG\)\)'
+    text: '주행 목표 전송 → ({x}, {y})'
+    layer: target
+  - id: goal_reached
+    category: nav
+    node: state_manager
+    contains: Goal reached successfully
+    regex: 'moving time\[(?P<sec>[\d.]+)\]'
+    text: '목표 도착 (이동 {sec}초)'
+  - id: goal_failed
+    category: nav
+    node: state_manager
+    contains: '[goalResultCallback] Goal'
+    regex: 'Goal (?P<r>aborted|canceled|cancelled|failed)'
+    text: '목표 실패: {r}'
+    level: warn
+  - id: planner_error
+    category: nav
+    node: planner_server
+    levels: [ERROR]
+    regex: '(?P<msg>.+)'
+    text: '경로 계획 실패: {msg}'
+    level: warn
+    dedupe_sec: 30
+  - id: controller_error
+    category: nav
+    node: controller_server
+    levels: [ERROR]
+    regex: '(?P<msg>.+)'
+    text: '주행 제어 실패: {msg}'
+    level: warn
+    dedupe_sec: 30
+  - id: bt_error
+    category: nav
+    node: bt_navigator
+    levels: [ERROR]
+    regex: '(?P<msg>.+)'
+    text: 'BT Navigator: {msg}'
+    level: warn
+  - id: escape
+    category: nav
+    node: A1_maneuver
+    contains: scape
+    regex: '(?P<msg>Front escape detected|Escape from high cost.*)'
+    text: '탈출 동작: {msg}'
+  - id: estop
+    category: nav
+    node: state_manager
+    contains: emergency stop status
+    regex: 'emergency stop status\[(?!RELEASED\])(?P<s>\w+)\]'
+    text: '비상정지: {s}'
+    level: error
+  - id: error_stop
+    category: error
+    node: actuation
+    contains: Error-list stop active
+    regex: 'Error-list stop active'
+    text: '에러로 인한 강제 정지 (cmd_vel=0)'
+    level: warn
+    dedupe_sec: 10
+
+  # ---------------------------------------------------------------- 에러
+  - id: error
+    kind: error
+    category: error
+    node: airbot_error_manager
+    contains: 'Error: ['
+    regex: '\[(?P<code>[A-Z]\d+(?:-\d+)?) \((?P<status>OCCURR?ED|RELEASED)\): (?P<desc>[^\]]*)\]'
+    layer: error
+  - id: error_reset
+    kind: error_reset
+    category: error
+    node: airbot_error_manager
+    contains: Realesed all error
+    regex: 'Realesed all error'
+    text: '에러 전체 해제'
+  - id: mcu_flag_on
+    category: mcu
+    node: robot_bringup
+    contains: ']error occurred'
+    regex: '\[ ?(?P<n>ERROR_\w+)\]error occurred'
+    text: 'MCU {n} 발생'
+    level: warn
+  - id: mcu_flag_off
+    category: mcu
+    node: robot_bringup
+    contains: ']error cleared'
+    regex: '\[ ?(?P<n>ERROR_\w+)\]error cleared'
+    text: 'MCU {n} 해제'
+
+  # ---------------------------------------------------------------- 도킹
+  - id: dock_start
+    category: dock
+    node: state_manager
+    contains: publish Start-Docking
+    regex: 'publish Start-Docking'
+    text: '도킹 시작'
+  - id: docked
+    category: dock
+    node: state_manager
+    contains: detected on Docking Station
+    regex: 'detected on Docking Station'
+    text: '스테이션 도킹 완료'
+  - id: station_on
+    category: dock
+    node: state_manager
+    contains: '[setOnstationStatus] OnStation'
+    regex: 'hex\[(?P<h>\w+)\]'
+    text: 'On-Station (docking 0x{h})'
+    track: station
+    value: 'ON'
+  - id: station_off
+    category: dock
+    node: state_manager
+    contains: '[setOnstationStatus] Off-Station'
+    regex: 'hex\[(?P<h>\w+)\]'
+    text: 'Off-Station (docking 0x{h})'
+    track: station
+    value: 'OFF'
+
+  # ---------------------------------------------------------------- 센서 / 장애물
+  - id: cliff_start
+    category: sensor
+    node: airbot_error_monitor
+    contains: 'Initial check => Cliff IR'
+    regex: 'Cliff IR (?P<ir>.+?) : true, pre_position \(X, Y\): \((?P<x>%F), (?P<y>%F)\)'
+    text: '낙하 IR 감지 시작: {ir}'
+    level: warn
+    layer: cliff
+  - id: drop_ir_detect
+    category: sensor
+    node: A1_maneuver
+    contains: '[DROP IR]'
+    regex: '\[DROP IR\] (?P<ir>\w+) detected'
+    text: '낙하 IR 감지: {ir}'
+    level: warn
+    layer: cliff
+    at_robot: true
+    dedupe_sec: 10
+  - id: drop_ir_action
+    category: sensor
+    node: A1_maneuver
+    contains: '[DROP IR]'
+    regex: '\[DROP IR\] (?P<msg>(?:maneuver off|FREEZE|BACKUP|released).*)'
+    text: '낙하 IR 동작: {msg}'
+    level: warn
+  - id: drop_ir_recovery
+    category: sensor
+    node: A1_maneuver
+    contains: '[DROP IR]'
+    regex: '\[DROP IR\] (?P<msg>nav\d recovery 감지.*)'
+    text: '낙하 IR: {msg}'
+    dedupe_sec: 30
+    dedupe_by: rule
+  - id: floor_tof_limit
+    node: A1_maneuver
+    contains: '[DROP IR PROTECT]'
+    regex: '바닥 ToF 위험 .*최고속도 (?P<v>%F) m/s 로 제한'
+    track: floor_tof
+    value: '제한 {v}m/s'
+    list: false
+  - id: floor_tof_clear
+    node: A1_maneuver
+    contains: '[DROP IR PROTECT]'
+    regex: '바닥 ToF 위험 해제'
+    track: floor_tof
+    value: '정상'
+    list: false
+  - id: floor_step
+    category: sensor
+    node: A1_maneuver
+    contains: '단차 far 발화'
+    regex: '단차 far 발화: (?P<s>\w+\[\d+\]) (?P<mm>\d+)mm'
+    text: '단차 감지(바닥 ToF): {s} {mm}mm'
+    layer: step
+    at_robot: true
+    list: false
+    dedupe_sec: 10
+    dedupe_by: rule
+  - id: drop_ir_baseline
+    category: sensor
+    node: A1_maneuver
+    levels: [WARN]
+    contains: ['[DROP IR PROTECT]', 'baseline']
+    regex: '\[DROP IR PROTECT\] (?P<msg>.*baseline.*)'
+    text: '낙하 IR 보정 경고: {msg}'
+    dedupe_sec: 600
+    dedupe_by: rule
+  - id: tof_1d
+    category: sensor
+    contains: 1D ToF detected
+    regex: '1D\(x:(?P<x>%F), y:(?P<y>%F), Dist:(?P<d>%F)'
+    text: '1D ToF 장애물 (거리 {d}m)'
+    layer: tof
+  - id: low_obs
+    category: sensor
+    contains: low level obstacle
+    regex: 'Obs\(x:(?P<x>%F), y:(?P<y>%F)'
+    text: '낮은 장애물 감지'
+    layer: low_obs
+  - id: camera_obj
+    contains: '[ID]:'
+    regex: '\[ID\]:\s*(?P<cls>\d+),\s*\[Position \(X, Y\):\s*\((?P<x>%F),\s*(?P<y>%F)\)\]'
+    layer: camera
+    list: false
+    dedupe_pos: true
+  - id: drop_off
+    category: sensor
+    contains: Detect drop off
+    regex: 'drop\(x:(?P<x>%F),\s*y:(?P<y>%F)'
+    text: 'Drop-off 감지'
+    layer: cliff
+  - id: collision
+    category: sensor
+    contains: Collision detected
+    regex: '(?P<side>Back )?Collision detected.*Coord\(x:(?P<x>%F),\s*y:(?P<y>%F)'
+    text: '{side}충돌 감지'
+    layer: collision
+  - id: sensor_no_data
+    category: sensor
+    node: odom_monitor
+    contains: data received for
+    regex: 'No (?P<what>IMU|odometry) data received for (?P<s>%F) seconds'
+    text: '{what} 데이터 미수신 ({s}초)'
+    level: warn
+    dedupe_sec: 30
+    dedupe_by: rule
+  - id: scan_state
+    node: scan_monitor
+    contains: scan state is
+    regex: 'scan state is front\[(?P<f>\w+)\], back\[(?P<b>\w+)\]'
+    track: scan
+    value: 'F:{f} B:{b}'
+    list: false
+
+  # ---------------------------------------------------------------- 위치추정
+  - id: kidnap
+    category: loc
+    contains: Kidnapped Robot Problem
+    regex: 'Kidnapped'
+    text: '키드냅 감지 → 재위치추정'
+    level: warn
+  - id: odom_anomaly
+    category: loc
+    node: odom_monitor
+    contains: Unexpected odometry change
+    regex: 'Actual linear distance: (?P<d>%F)'
+    text: '오도메트리 이상 변화 ({d}m)'
+    level: warn
+    dedupe_sec: 30
+    dedupe_by: rule
+  - id: imu_anomaly
+    category: loc
+    node: odom_monitor
+    contains: IMU anomaly detected
+    regex: 'Actual Yaw Change: (?P<d>%F)'
+    text: 'IMU yaw 이상 변화 ({d})'
+    level: warn
+    dedupe_sec: 30
+    dedupe_by: rule
+  - id: tf_missing
+    category: loc
+    node: tf_monitor
+    contains: TF MISSING
+    regex: '\[TF MISSING\] (?P<tf>.+?) not available'
+    text: 'TF 누락: {tf}'
+    level: warn
+    dedupe_sec: 60
+
+  # ---------------------------------------------------------------- 배터리
+  - id: battery
+    category: battery
+    continuation: true
+    contains: 'Percentage:['
+    regex: 'Percentage:\[(?P<pct>\d+) %\] / Current:\[(?P<cur>%F) mA\] / Voltage:\[(?P<mv>%F) mV\] / Temp1:\[(?P<t1>-?\d+)'
+    text: '배터리 {pct}% ({cur}mA, {t1}°C)'
+    track: battery
+    value: '{pct}%'
+    list_on_change: true

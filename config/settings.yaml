@@ -1,0 +1,20 @@
+# Airbot Log Analyzer 기본 설정
+# - 개인별 변경은 앱의 [NAS 경로] 버튼으로 저장하세요 (사용자 설정 파일에 저장되며 이 파일은 바뀌지 않음).
+
+nas:
+  # NAS 로그 폴더 UNC 경로 (예: '\\<NAS 서버>\<공유 폴더>\<로그 폴더>'). 비워두면 앱의 [NAS 경로]에서 설정
+  root: ''
+  # Linux(Ubuntu) 에서 NAS 를 마운트한 경로 (docs/SETUP.md 참고). WSL 에서도 있으면 우선 사용
+  linux_path: /mnt/nas_log
+
+playback:
+  idle_gap_sec: 5      # 이보다 긴 로그 공백은 재생 시 이 시간으로 압축
+  speed: 10            # 기본 배속
+
+display:
+  history_minutes: 10  # 궤적/마커 누적 표시 범위(분, 실제 시간 기준). 0 = 전체
+
+workspace:
+  temp_root: ''        # 압축 해제 임시 폴더 위치 (비우면 OS 임시 폴더). 종료 시 자동 삭제
+  skip_members:        # 압축 해제 시 건너뛸 경로 (SoC 로그는 현재 사용하지 않음)
+    - 'soc/*'

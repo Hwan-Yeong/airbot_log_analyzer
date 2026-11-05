@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# 로그/분석 산출물은 커밋하지 않음
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+/out/
