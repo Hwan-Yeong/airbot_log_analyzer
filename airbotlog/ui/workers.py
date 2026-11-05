@@ -105,8 +105,13 @@ class BackgroundJob(QObject):
         self._timer.stop()
         cb_done, cb_failed = self.on_done, self.on_failed
         self.on_progress = self.on_done = self.on_failed = None
-        if error is not None:
-            if cb_failed:
-                cb_failed(error)
-        elif cb_done:
-            cb_done(result)
+        with st.lock:              # 결과를 넘긴 뒤에는 붙잡지 않음 (로그 세션이 메모리에 계속 남던 문제)
+            st.result = st.error = None
+        try:
+            if error is not None:
+                if cb_failed:
+                    cb_failed(error)
+            elif cb_done:
+                cb_done(result)
+        finally:
+            self.deleteLater()     # 부모(메인 창)가 닫힐 때까지 작업 객체가 쌓이지 않도록

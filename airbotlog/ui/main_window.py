@@ -630,6 +630,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e):
         self.pause()
+        if self._prefs_timer.isActive():   # 저장 대기 중인 표시 설정은 닫기 전에 저장
+            self._prefs_timer.stop()
+            self._write_view_prefs()
         if self._worker is not None:
             self._worker.detach()
             self._worker.wait(15)      # 로드 중이면 끝날 때까지 잠시 대기 (임시 폴더 정리 전, 초)

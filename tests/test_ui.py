@@ -81,3 +81,43 @@ def test_theme_toggle_keeps_map(app, win):
     assert win.map_view.backgroundBrush().color().name() == style.DARK.map_bg
     win.apply_theme("light")
     assert not style.T().dark and len(_map_items(win)) == 1
+
+
+def _wait(app, cond, timeout=60.0):
+    import time
+    end = time.time() + timeout
+    while time.time() < end and not cond():
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+    return cond()
+
+
+def test_reload_releases_previous_session(app, demo_zip, settings):
+    """로그를 여러 번 열어도 이전 세션이 메모리에 남지 않음 (1.1.3: 열 때마다 세션 하나씩 누적)."""
+    import gc
+    import weakref
+
+    from airbotlog.ui.main_window import MainWindow
+    from airbotlog.ui.workers import BackgroundJob
+    w = MainWindow(settings)
+    refs = []
+    for _ in range(3):
+        w.load_inputs([demo_zip])
+        assert _wait(app, lambda: w._worker is None and w.session is not None)
+        refs.append(weakref.ref(w.session))
+    _wait(app, lambda: not w.findChildren(BackgroundJob), 5)
+    gc.collect()
+    assert not w.findChildren(BackgroundJob)
+    assert [r() is None for r in refs] == [True, True, False]   # 마지막 세션만 남음
+    w.close()
+
+
+def test_view_prefs_saved_on_close(app, demo_zip, settings):
+    """설정 변경 직후(저장 대기 0.8초 안) 닫아도 표시 설정이 저장됨."""
+    from airbotlog.settings import Settings
+    from airbotlog.ui.main_window import MainWindow
+    w = MainWindow(settings)
+    w.layer_panel.spn_robot.setValue(37)
+    w.close()
+    assert Settings(user_path=settings.user_path).get("display.view")["robot_size"] == 37
