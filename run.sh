@@ -34,5 +34,17 @@ if [ -n "${WSL_DISTRO_NAME:-}" ] && [ -z "${QT_QPA_PLATFORM:-}" ]; then
       export LD_LIBRARY_PATH="$PWD/$(dirname "$LIB")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
   fi
+  # X11 커서 테마 (WSL 에는 없어서 마우스 포인터가 안 보임) → DMZ-White 를 .venv 안에 준비해 default 로 사용
+  ICON_DIR="$PWD/.venv/xcb-libs/icons"
+  if [ ! -e "$ICON_DIR/default/index.theme" ]; then
+    T="$(mktemp -d)"
+    ( cd "$T" && apt-get download dmz-cursor-theme >/dev/null 2>&1 && dpkg-deb -x dmz-cursor-theme_*.deb x \
+      && mkdir -p "$ICON_DIR/default" && cp -r x/usr/share/icons/DMZ-White "$ICON_DIR/" \
+      && printf '[Icon Theme]\nInherits=DMZ-White\n' > "$ICON_DIR/default/index.theme" ) || true
+    rm -rf "$T"
+  fi
+  if [ -e "$ICON_DIR/default/index.theme" ]; then
+    export XCURSOR_PATH="$ICON_DIR:${XCURSOR_PATH:-$HOME/.icons:/usr/share/icons:/usr/share/pixmaps}"
+  fi
 fi
 exec .venv/bin/python run.py "$@"

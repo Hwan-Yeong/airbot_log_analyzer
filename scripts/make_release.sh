@@ -7,7 +7,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "커밋되지 않은 변경이 있습니다. 먼저 커밋하세요." >&2
   exit 1
 fi
-VER="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' airbotlog/__init__.py)"
+VER="$(sed -n 's/^version *= *//p' version.ini | tr -d '\r ')"
 REPO="$(git remote get-url origin 2>/dev/null | sed -e 's/\.git$//' -e 's#^git@\([^:]*\):#https://\1/#')"
 OUT="${1:-dist}"
 mkdir -p "$OUT"

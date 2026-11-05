@@ -99,7 +99,8 @@ def main():
 
     app = QApplication([])
     apply_style(app, args.theme)
-    cfg_dir = tempfile.TemporaryDirectory(prefix="airbotcap_")     # 개인 설정 영향 없음 (끝나면 자동 삭제)
+    cfg_dir = tempfile.TemporaryDirectory(prefix="airbotcap_")     # 개인 설정·캐시 영향 없음 (끝나면 자동 삭제)
+    os.environ["XDG_CACHE_HOME"] = cfg_dir.name                # NAS 목록 캐시도 임시 폴더에
     settings = Settings(user_path=Path(cfg_dir.name) / "settings.yaml")
     win = MainWindow(settings)
     win.resize(*SIZE)

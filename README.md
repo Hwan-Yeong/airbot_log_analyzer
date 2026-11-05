@@ -34,4 +34,4 @@
 - 테스트: `.venv/bin/pip install pytest` 후 `.venv/bin/python -m pytest tests` (데모 로그 자동 생성, UI 테스트 포함)
 - 데모 로그: `python scripts/make_demo_data.py <출력 폴더>`
 - 문서 캡처: `python scripts/capture_docs.py <로그 압축> [--nas]`
-- 릴리스: 버전(`airbotlog/__init__.py`) · `CHANGELOG.md` · 문서 캡처를 함께 갱신, 배포 zip은 `scripts/make_release.sh`
+- 릴리스: 버전(`version.ini`) · `CHANGELOG.md` · 문서 캡처를 함께 갱신, 배포 파일은 `scripts/make_release.sh`

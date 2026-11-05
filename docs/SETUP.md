@@ -45,7 +45,7 @@ sudo mount -t cifs "//<NAS 서버>/<공유 폴더>/<로그 폴더>" \
 |---|---|
 | 시작 시 "PySide6 … 동작 오류" | `run.sh`/`run.bat`로 실행하거나 `pip install "PySide6<6.12"` (PySide6 6.12 + Python 3.11 이하 버그) |
 | `Could not load the Qt platform plugin "xcb"` | `sudo apt install libxcb-cursor0` |
-| WSL 에서 드롭다운이 가끔 안 열림 | `run.sh` 로 실행 (WSL 은 X11(xcb)로 자동 실행). 직접 실행 시 `QT_QPA_PLATFORM=xcb` |
+| WSL 에서 드롭다운이 가끔 안 열림 / 마우스 포인터 안 보임 | `run.sh` 로 실행 (WSL 은 X11(xcb) + 커서 테마 자동 준비) |
 | NAS 접근 오류 | Windows 탐색기에서 NAS 경로를 한 번 열어 로그인 / Ubuntu는 마운트 확인 |
 | 임시 폴더 위치 | OS 임시 폴더의 `airbotlog_*` (종료 시 삭제, 비정상 종료분은 다음 실행 때 정리) |
 | 프로그램이 갑자기 종료됨 | 사용자 캐시 폴더의 `crash.log` 전달 (Windows `%LOCALAPPDATA%\airbot-log-analyzer\`, Linux `~/.cache/airbot-log-analyzer/`) |
