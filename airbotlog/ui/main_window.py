@@ -9,8 +9,9 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QDialog, QFileDialog, QGridLayout, QLabel, QMainWindow, QMessageBox, QProgressBar,
-                               QScrollArea, QSplitter, QStyle, QTabWidget, QToolBar, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QGridLayout, QLabel, QMainWindow, QMessageBox,
+                               QProgressBar, QScrollArea, QSplitter, QStyle, QTabWidget, QToolBar, QVBoxLayout,
+                               QWidget)
 
 from .. import APP_NAME, __version__
 from ..loader import load_session
@@ -19,6 +20,7 @@ from ..model import fmt_time
 from ..rules import RuleError, RuleSet
 from ..settings import Settings, user_config_dir
 from ..workspace import SourceError, Workspace, prepare_map
+from . import style
 from .log_view import LogView
 from .map_view import MapView
 from .nas_dialog import NasDialog, NasPathDialog
@@ -74,7 +76,7 @@ class MainWindow(QMainWindow):
         self.session = None
         self.vt = 0.0
         self.playing = False
-        self.speed = int(self.settings.get("playback.speed", 10))
+        self.speed = float(self.settings.get("playback.speed", 10))
         self._last_tick = 0.0
         self._last_slow = 0.0
         self._worker = None
@@ -113,8 +115,7 @@ class MainWindow(QMainWindow):
         self.empty = QLabel("로그 압축 파일(zip / AMR_LOG.tar.gz)이나 폴더를 여기에 끌어다 놓거나\n"
                             "[열기] 또는 [NAS] 버튼으로 불러오세요.")
         self.empty.setAlignment(Qt.AlignCenter)
-        self.empty.setStyleSheet("color:#455a64; font-size:13pt; background:rgba(255,255,255,200);"
-                                 "border-radius:8px; padding:24px;")
+        self.empty.setObjectName("empty")
         self.empty.setAttribute(Qt.WA_TransparentForMouseEvents)
         grid.addWidget(self.empty, 0, 0, Qt.AlignCenter)
         for w in (self.hud, self.hud_err):
@@ -127,6 +128,8 @@ class MainWindow(QMainWindow):
         self.playbar.gotoEdge.connect(lambda e: self.set_vt(0.0 if e == 0 else self._vt_end(), "seek"))
         self.playbar.speedChanged.connect(self._set_speed)
         self.playbar.jumpToTime.connect(self.jump_to_time)
+        self.playbar.jumpPressed.connect(self.pause)
+        self.playbar.jumpSeconds.connect(self.jump_seconds)
         self.playbar.bar.seek.connect(lambda vt: self.set_vt(vt, "seek"))
         self.playbar.bar.time_text = lambda vt: fmt_time(self.session.time_at(vt)) if self.session else ""
 
@@ -140,11 +143,15 @@ class MainWindow(QMainWindow):
         self.layer_panel = LayerPanel()
         self.layer_panel.set_history_minutes(int(self.settings.get("display.history_minutes", 10)))
         self.layer_panel.changed.connect(self._apply_display)
-        self.layer_panel.markerSizeChanged.connect(self._set_marker_scale)
+        self._restore_view_prefs()
+        self.layer_panel.trailChanged.connect(self._on_trail_changed)
+        self.layer_panel.robotSizeChanged.connect(lambda v: (self.map_view.set_robot_size(v), self._save_view_prefs()))
+        self.layer_panel.stationSizeChanged.connect(lambda v: (self.map_view.set_station_size(v), self._save_view_prefs()))
+        self.layer_panel.layerSizeChanged.connect(lambda lid, v: (self.map_view.set_layer_size(lid, v), self._save_view_prefs()))
         left = QScrollArea()
         left.setWidget(self.layer_panel)
         left.setWidgetResizable(True)
-        left.setMinimumWidth(210)
+        left.setMinimumWidth(270)
 
         self.event_panel = EventPanel()
         self.event_panel.activated.connect(self.jump_to_event)
@@ -163,7 +170,7 @@ class MainWindow(QMainWindow):
         top.addWidget(center)
         top.addWidget(self.tabs)
         top.setStretchFactor(1, 1)
-        top.setSizes([230, 900, 470])
+        top.setSizes([285, 860, 455])
         top.setChildrenCollapsible(False)
 
         self.log_view = LogView()
@@ -209,6 +216,12 @@ class MainWindow(QMainWindow):
         act(QStyle.SP_FileIcon, "이벤트 CSV", self.export_csv, None, "현재 필터의 이벤트 목록을 CSV 로 저장")
         tb.addSeparator()
         act(QStyle.SP_ComputerIcon, "NAS 경로", self.edit_nas_path, None, "NAS 경로 설정")
+        self.act_dark = QAction("다크 모드", self)
+        self.act_dark.setCheckable(True)
+        self.act_dark.setChecked(style.T().dark)
+        self.act_dark.setToolTip("라이트 / 다크 테마 전환")
+        self.act_dark.toggled.connect(lambda on: self.apply_theme("dark" if on else "light"))
+        tb.addAction(self.act_dark)
         act(QStyle.SP_MessageBoxInformation, "정보", self.show_about)
 
         for key, fn in (("Space", self.toggle_play), ("Left", lambda: self.step_event(-1)),
@@ -294,7 +307,7 @@ class MainWindow(QMainWindow):
         self.vt = 0.0
         layers = S.rules.layers
         self.map_view.set_session(S, layers)
-        self.layer_panel.set_layers(layers, {k: len(v) for k, v in S.markers.items()})
+        self.layer_panel.set_layers(layers, {k: len(v) for k, v in S.markers.items()}, self.map_view.layer_sizes)
         self.event_panel.set_session(S)
         self.error_panel.set_session(S)
         self.summary.set_session(S)
@@ -340,11 +353,53 @@ class MainWindow(QMainWindow):
         if self.session:
             mv.update_frame(self.vt, lp.history_sec())
 
-    def _set_marker_scale(self, scale):
-        self.map_view.marker_scale = scale
-        if self.session:
-            self.map_view.rebuild_markers(self.session.rules.layers)
+    # ---- 테마
+    def apply_theme(self, name: str):
+        style.apply_style(QApplication.instance(), name)
+        lp = self.layer_panel
+        self.map_view.apply_theme({"keepout": lp.chk_keepout.isChecked(), "station": lp.chk_station.isChecked()})
+        self.playbar.bar.update()
+        self.log_view.view.viewport().update()
+        self.event_panel.apply_theme()
+        S = self.session
+        if S is not None:
+            lp.set_layers(S.rules.layers, {k: len(v) for k, v in S.markers.items()}, self.map_view.layer_sizes)
+            self.error_panel.set_session(S)
+            self.summary.set_session(S)
             self._apply_display()
+            self.set_vt(self.vt, "seek")
+        try:
+            self.settings.set_user("display.theme", name)
+        except OSError:
+            pass
+
+    # ---- 표시 설정 (사용자 설정 파일에 저장)
+    def _restore_view_prefs(self):
+        p = self.settings.get("display.view", {}) or {}
+        self.layer_panel.apply_prefs(p)
+        mv = self.map_view
+        mv.layer_sizes = {str(k): int(v) for k, v in (p.get("layer_sizes") or {}).items()}
+        mv.robot_size = self.layer_panel.spn_robot.value()
+        mv.station_size = self.layer_panel.spn_station.value()
+        mv.set_trail(self.layer_panel.trail_mode(), self.layer_panel.spn_trail_count.value(),
+                     float(self.layer_panel.spn_trail_width.value()))
+        self._prefs_timer = QTimer(self)
+        self._prefs_timer.setSingleShot(True)
+        self._prefs_timer.setInterval(800)
+        self._prefs_timer.timeout.connect(self._write_view_prefs)
+
+    def _save_view_prefs(self):
+        self._prefs_timer.start()
+
+    def _write_view_prefs(self):
+        try:
+            self.settings.set_user("display.view", self.layer_panel.prefs())
+        except OSError:
+            pass
+
+    def _on_trail_changed(self, mode, count, width):
+        self.map_view.set_trail(mode, count, width)
+        self._save_view_prefs()
 
     # ------------------------------------------------------------ 시간 이동
     def _vt_end(self):
@@ -426,6 +481,14 @@ class MainWindow(QMainWindow):
             return
         self.pause()
         self.set_vt(vt, "seek")
+
+    def jump_seconds(self, sec: float):
+        """실제 로그 시간 기준 ±sec 이동 (긴 공백은 건너뜀). 재생 중이면 일시정지."""
+        S = self.session
+        if S is None:
+            return
+        self.pause()
+        self.set_vt(S.vt_at_rt(S.rt_at(self.vt) + sec), "seek")
 
     def step_event(self, direction: int):
         if self.session is None:

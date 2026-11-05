@@ -58,12 +58,14 @@ def main(argv=None):
     except ImportError:
         print("PySide6 가 설치되어 있지 않습니다:  pip install -r requirements.txt", file=sys.stderr)
         return 1
+    from .settings import Settings
     from .ui.main_window import MainWindow
     from .ui.style import apply_style
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
-    apply_style(app)
+    settings = Settings()
+    apply_style(app, settings.get("display.theme", "light"))
     if not binding_ok():
         import PySide6
         from PySide6.QtWidgets import QMessageBox
@@ -73,7 +75,7 @@ def main(argv=None):
         print(msg, file=sys.stderr)
         QMessageBox.critical(None, APP_NAME, msg)
         return 2
-    win = MainWindow()
+    win = MainWindow(settings)
     atexit.register(win.ws.cleanup)                       # 비정상 종료 대비
     signal.signal(signal.SIGINT, lambda *_: app.quit())   # Ctrl+C 로 종료해도 임시 폴더 정리
     keepalive = QTimer()                                   # Qt 루프 중에도 파이썬 시그널 처리

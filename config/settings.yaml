@@ -13,6 +13,7 @@ playback:
 
 display:
   history_minutes: 10  # 궤적/마커 누적 표시 범위(분, 실제 시간 기준). 0 = 전체
+  theme: light         # light | dark (앱의 [다크 모드] 버튼으로 바꾸면 사용자 설정에 저장)
 
 workspace:
   temp_root: ''        # 압축 해제 임시 폴더 위치 (비우면 OS 임시 폴더). 종료 시 자동 삭제

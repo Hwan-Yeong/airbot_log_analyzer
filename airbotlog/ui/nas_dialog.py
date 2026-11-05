@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout
                                QVBoxLayout)
 
 from ..nas import load_index_cache, resolve_source, save_index_cache
+from . import style
 from .panels import match_query, parse_query
 from .workers import BackgroundJob
 
@@ -123,7 +124,7 @@ class NasDialog(QDialog):
             self.source, msg = resolve_source(self.settings)
         else:
             msg = self.source.describe()
-        self.lbl_conn.setText(f"<b>연결</b>: {msg}" if self.source else f"<b style='color:#c62828'>연결 안 됨</b>: {msg}")
+        self.lbl_conn.setText(f"<b>연결</b>: {msg}" if self.source else f"<b style='color:{style.T().error}'>연결 안 됨</b>: {msg}")
         self.btn_refresh.setEnabled(self.source is not None)
         if self.source is None:
             return
@@ -163,7 +164,7 @@ class NasDialog(QDialog):
         self._worker = None
         self.btn_refresh.setEnabled(True)
         self.lbl_status.setText("조회 실패")
-        self.lbl_conn.setText(f"<b style='color:#c62828'>오류</b>: {msg}")
+        self.lbl_conn.setText(f"<b style='color:{style.T().error}'>오류</b>: {msg}")
 
     def _edit_path(self):
         if NasPathDialog(self.settings, self).exec():

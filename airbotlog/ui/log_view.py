@@ -10,10 +10,6 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QHBoxLayout, QHeade
 
 from . import style
 
-CUR_BG = QBrush(QColor("#fff59d"))
-WARN_FG = QBrush(QColor(style.LEVEL_COLORS["warn"]))
-ERR_FG = QBrush(QColor(style.LEVEL_COLORS["error"]))
-CONT_FG = QBrush(QColor("#78909c"))
 MAX_TEXT = 3000
 
 
@@ -53,7 +49,7 @@ class LogModel(QAbstractTableModel):
             return None
         g = index.row()
         if role == Qt.BackgroundRole:
-            return CUR_BG if g == self.current else None
+            return QBrush(QColor(style.T().cur_line)) if g == self.current else None
         fi, ln = self.session.locate_line(g)
         if role == Qt.DisplayRole:
             if index.column() == 0:
@@ -64,12 +60,13 @@ class LogModel(QAbstractTableModel):
             return text if len(text) <= MAX_TEXT else text[:MAX_TEXT] + " …"
         if role == Qt.ForegroundRole and index.column() == 2:
             head = self.session.line_text(fi, ln)[:70]
+            t = style.T()
             if "] [ERROR]" in head:
-                return ERR_FG
+                return QBrush(QColor(t.error))
             if "] [WARN]" in head:
-                return WARN_FG
+                return QBrush(QColor(t.warn))
             if not head.startswith("["):
-                return CONT_FG
+                return QBrush(QColor(t.cont))
         if role == Qt.TextAlignmentRole and index.column() == 1:
             return int(Qt.AlignRight | Qt.AlignVCenter)
         return None

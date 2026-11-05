@@ -6,9 +6,9 @@ from collections import Counter
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QGroupBox, QHBoxLayout, QHeaderView,
-                               QLabel, QLayout, QLineEdit, QSlider, QTableView, QTableWidget, QTableWidgetItem,
-                               QTextBrowser, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QGroupBox, QHBoxLayout,
+                               QHeaderView, QLabel, QLayout, QLineEdit, QSpinBox, QTableView, QTableWidget,
+                               QTableWidgetItem, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from ..model import fmt_duration, fmt_time
 from . import style
@@ -54,7 +54,7 @@ def marker_icon(shape: str, color: str, size: int = 14) -> QIcon:
     if shape == "cross":
         p.setPen(QPen(QColor(color), 2))
     else:
-        p.setPen(QColor("#263238"))
+        p.setPen(QColor(style.T().marker_edge))
         p.setBrush(QColor(color))
     p.drawPath(path)
     p.end()
@@ -118,53 +118,104 @@ class FlowLayout(QLayout):
 
 
 # ---------------------------------------------------------------- 좌측: 표시 설정
+TRAIL_MODES = [("선", "line"), ("포즈", "poses")]
+
+
+def _spin(lo, hi, value, suffix="", tip=""):
+    sp = QSpinBox()
+    sp.setRange(lo, hi)
+    sp.setValue(int(value))
+    if suffix:
+        sp.setSuffix(suffix)
+    sp.setToolTip(tip)
+    sp.setFixedWidth(64)
+    sp.setKeyboardTracking(False)   # 입력 중에는 반영하지 않고 Enter/포커스 이동 시 반영
+    return sp
+
+
 class LayerPanel(QWidget):
-    changed = Signal()
-    markerSizeChanged = Signal(float)
+    changed = Signal()                         # 표시/숨김, 누적 범위
+    trailChanged = Signal(str, int, float)     # 모드, 포즈 개수, 선 굵기
+    robotSizeChanged = Signal(int)
+    stationSizeChanged = Signal(int)
+    layerSizeChanged = Signal(str, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         g = QGroupBox("표시")
-        gl = QVBoxLayout(g)
+        grid = QGridLayout(g)
+        grid.setColumnStretch(0, 1)
         self.chk_trail = QCheckBox("로봇 궤적")
+        self.cmb_trail = QComboBox()
+        for name, _m in TRAIL_MODES:
+            self.cmb_trail.addItem(name)
+        self.cmb_trail.setToolTip("선: 누적 표시 범위(최근 N분)의 이동 경로를 선으로\n포즈: 최근 N개 위치를 방향과 함께 표시 (기존 분석기 방식)")
+        self.lbl_trail_opt = QLabel("선 굵기 (px)")
+        self.spn_trail_width = _spin(1, 10, 2, "", "궤적 선 굵기 (px)")
+        self.spn_trail_count = _spin(1, 500, 50, "", "표시할 최근 포즈 개수")
         self.chk_follow = QCheckBox("로봇 따라가기")
         self.chk_keepout = QCheckBox("금지구역")
         self.chk_station = QCheckBox("충전 스테이션")
-        for c in (self.chk_trail, self.chk_follow, self.chk_keepout, self.chk_station):
-            c.setChecked(True)
-            c.toggled.connect(self.changed)
-            gl.addWidget(c)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("누적 표시"))
+        self.spn_station = _spin(10, 60, 22, "", "스테이션 아이콘 크기 (px)")
+        self.spn_robot = _spin(8, 60, 18, "", "로봇 아이콘 크기 (px)")
         self.cmb_history = QComboBox()
         for name, _sec in HISTORY_CHOICES:
             self.cmb_history.addItem(name)
-        self.cmb_history.setToolTip("궤적과 마커를 현재 시점 기준으로 얼마 전까지 보여줄지")
+        self.cmb_history.setToolTip("선 궤적과 마커를 현재 시점 기준 얼마 전까지 보여줄지 (실제 시간)")
+        grid.addWidget(self.chk_trail, 0, 0)
+        grid.addWidget(self.cmb_trail, 0, 1, 1, 2)
+        grid.addWidget(self.lbl_trail_opt, 1, 0)
+        grid.addWidget(self.spn_trail_width, 1, 1)
+        grid.addWidget(self.spn_trail_count, 1, 2)
+        grid.addWidget(QLabel("로봇 크기 (px)"), 2, 0)
+        grid.addWidget(self.spn_robot, 2, 1)
+        grid.addWidget(self.chk_station, 3, 0)
+        grid.addWidget(self.spn_station, 3, 1)
+        grid.addWidget(self.chk_keepout, 4, 0)
+        grid.addWidget(self.chk_follow, 5, 0, 1, 3)
+        grid.addWidget(QLabel("누적 표시"), 6, 0)
+        grid.addWidget(self.cmb_history, 6, 1, 1, 2)
+        for c in (self.chk_trail, self.chk_follow, self.chk_keepout, self.chk_station):
+            c.setChecked(True)
+            c.toggled.connect(self.changed)
         self.cmb_history.currentIndexChanged.connect(self.changed)
-        row.addWidget(self.cmb_history, 1)
-        gl.addLayout(row)
+        self.cmb_trail.currentIndexChanged.connect(self._trail_changed)
+        self.spn_trail_width.valueChanged.connect(self._trail_changed)
+        self.spn_trail_count.valueChanged.connect(self._trail_changed)
+        self.spn_robot.valueChanged.connect(self.robotSizeChanged)
+        self.spn_station.valueChanged.connect(self.stationSizeChanged)
         lay.addWidget(g)
 
-        self.grp_layers = QGroupBox("마커")
-        self.layers_layout = QVBoxLayout(self.grp_layers)
+        self.grp_layers = QGroupBox("마커 (표시 / 크기 px)")
+        self.layers_grid = QGridLayout(self.grp_layers)
+        self.layers_grid.setColumnStretch(0, 1)
         lay.addWidget(self.grp_layers)
-        size_row = QHBoxLayout()
-        size_row.addWidget(QLabel("마커 크기"))
-        self.sld_size = QSlider(Qt.Horizontal)
-        self.sld_size.setRange(50, 250)
-        self.sld_size.setValue(100)
-        self.sld_size.sliderReleased.connect(lambda: self.markerSizeChanged.emit(self.sld_size.value() / 100))
-        size_row.addWidget(self.sld_size, 1)
-        lay.addLayout(size_row)
         hint = QLabel("마커를 클릭하면 그 시점으로 이동합니다.\n휠: 확대/축소, 드래그: 이동, 더블클릭: 전체 보기")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
         lay.addStretch(1)
         self.layer_checks = {}
+        self.layer_spins = {}
+        self._update_trail_widgets()
 
+    # ---- 궤적
+    def trail_mode(self) -> str:
+        return TRAIL_MODES[self.cmb_trail.currentIndex()][1]
+
+    def _update_trail_widgets(self):
+        poses = self.trail_mode() == "poses"
+        self.lbl_trail_opt.setText("최근 포즈 개수" if poses else "선 굵기 (px)")
+        self.spn_trail_count.setVisible(poses)
+        self.spn_trail_width.setVisible(not poses)
+
+    def _trail_changed(self, *_):
+        self._update_trail_widgets()
+        self.trailChanged.emit(self.trail_mode(), self.spn_trail_count.value(), float(self.spn_trail_width.value()))
+
+    # ---- 누적 범위
     def set_history_minutes(self, minutes: int):
         sec = int(minutes) * 60
         for i, (_n, s) in enumerate(HISTORY_CHOICES):
@@ -176,24 +227,52 @@ class LayerPanel(QWidget):
     def history_sec(self) -> int:
         return HISTORY_CHOICES[self.cmb_history.currentIndex()][1]
 
-    def set_layers(self, layers, counts: dict):
+    # ---- 마커 레이어
+    def set_layers(self, layers, counts: dict, sizes: dict):
         prev_states = {lid: c.isChecked() for lid, c in self.layer_checks.items()}
-        while self.layers_layout.count():
-            w = self.layers_layout.takeAt(0).widget()
+        while self.layers_grid.count():
+            w = self.layers_grid.takeAt(0).widget()
             if w:
                 w.deleteLater()
-        self.layer_checks = {}
-        for layer in layers:
-            chk = QCheckBox(f"{layer.name}  ({counts.get(layer.id, 0)})")
+        self.layer_checks, self.layer_spins = {}, {}
+        for r, layer in enumerate(layers):
+            n = counts.get(layer.id, 0)
+            chk = QCheckBox(f"{layer.name}  ({n})")
             chk.setIcon(marker_icon(layer.shape, layer.color))
             chk.setChecked(prev_states.get(layer.id, layer.visible))
             chk.toggled.connect(self.changed)
-            chk.setVisible(counts.get(layer.id, 0) > 0)
-            self.layers_layout.addWidget(chk)
+            spn = _spin(3, 60, sizes.get(layer.id, layer.size), "", f"{layer.name} 마커 크기 (px)")
+            spn.valueChanged.connect(lambda v, lid=layer.id: self.layerSizeChanged.emit(lid, v))
+            for w in (chk, spn):
+                w.setVisible(n > 0)
+            self.layers_grid.addWidget(chk, r, 0)
+            self.layers_grid.addWidget(spn, r, 1)
             self.layer_checks[layer.id] = chk
+            self.layer_spins[layer.id] = spn
 
     def layer_visibility(self) -> dict:
         return {lid: c.isChecked() for lid, c in self.layer_checks.items()}
+
+    # ---- 사용자 설정 저장/복원
+    def prefs(self) -> dict:
+        return {"trail_mode": self.trail_mode(), "trail_count": self.spn_trail_count.value(),
+                "trail_width": self.spn_trail_width.value(), "robot_size": self.spn_robot.value(),
+                "station_size": self.spn_station.value(),
+                "layer_sizes": {lid: sp.value() for lid, sp in self.layer_spins.items()}}
+
+    def apply_prefs(self, p: dict):
+        widgets = (self.cmb_trail, self.spn_trail_count, self.spn_trail_width, self.spn_robot, self.spn_station)
+        for w in widgets:
+            w.blockSignals(True)
+        modes = [m for _n, m in TRAIL_MODES]
+        self.cmb_trail.setCurrentIndex(modes.index(p.get("trail_mode")) if p.get("trail_mode") in modes else 0)
+        self.spn_trail_count.setValue(int(p.get("trail_count", 50)))
+        self.spn_trail_width.setValue(int(p.get("trail_width", 2)))
+        self.spn_robot.setValue(int(p.get("robot_size", 18)))
+        self.spn_station.setValue(int(p.get("station_size", 22)))
+        for w in widgets:
+            w.blockSignals(False)
+        self._update_trail_widgets()
 
 
 # ---------------------------------------------------------------- 우측: 이벤트 목록
@@ -242,8 +321,8 @@ class EventModel(QAbstractTableModel):
         if role == Qt.ForegroundRole:
             if col == 1:
                 c = self.cats.get(ev.cat)
-                return QBrush(QColor(c.color)) if c else None
-            return QBrush(QColor(style.LEVEL_COLORS.get(ev.level, "#263238")))
+                return QBrush(style.category_color(c.color)) if c else None
+            return QBrush(style.level_color(ev.level))
         if role == Qt.ToolTipRole:
             f = self.session.files[ev.fi].name
             return f"{fmt_time(ev.t)}  [{ev.node}]\n{ev.text}\n{f} : {ev.ln + 1}줄"
@@ -315,14 +394,27 @@ class EventPanel(QWidget):
             b.setCheckable(True)
             b.setChecked(c.visible)
             b.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            b.setStyleSheet(
-                "QToolButton { border: 1px solid %s; border-radius: 9px; padding: 1px 7px; color: %s; background: #fff; }"
-                "QToolButton:checked { background: %s; color: #fff; }" % (c.color, c.color, c.color))
+            b.setProperty("cat_color", c.color)
+            self._style_chip(b)
             b.toggled.connect(self.refilter)
             b.setToolTip("클릭: 이 분류 보이기/숨기기")
             self.cat_flow.addWidget(b)
             self.cat_buttons[c.id] = b
         self.refilter()
+
+    @staticmethod
+    def _style_chip(b):
+        t = style.T()
+        fg = style.category_color(b.property("cat_color")).name()
+        bg = QColor(b.property("cat_color")).name()
+        b.setStyleSheet(
+            "QToolButton { border: 1px solid %s; border-radius: 9px; padding: 1px 7px; color: %s; background: %s; }"
+            "QToolButton:checked { background: %s; color: #fff; }" % (fg, fg, t.base, bg))
+
+    def apply_theme(self):
+        for b in self.cat_buttons.values():
+            self._style_chip(b)
+        self.view.viewport().update()
 
     def refilter(self):
         S = self.session
@@ -411,7 +503,7 @@ class ErrorPanel(QWidget):
         for r, e in enumerate(self.history):
             st = e.data.get("status")
             label = {"OCCURRED": "발생", "RELEASED": "해제", "RESET": "전체 해제"}.get(st, st)
-            color = QColor("#c62828") if st == "OCCURRED" else QColor("#2e7d32")
+            color = QColor(style.T().error if st == "OCCURRED" else style.T().ok)
             vals = [fmt_time(e.t)[5:], e.data.get("code", "-"), label, e.data.get("desc", e.text)]
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
@@ -434,7 +526,7 @@ class ErrorPanel(QWidget):
         for r, e in enumerate(self._active_events):
             for c, v in enumerate([e.data["code"], fmt_time(e.t)[5:], e.data.get("desc", "")]):
                 it = QTableWidgetItem(v)
-                it.setForeground(QColor("#c62828"))
+                it.setForeground(QColor(style.T().error))
                 t.setItem(r, c, it)
 
     def _active_clicked(self, r, _c):
@@ -465,13 +557,14 @@ class SummaryPanel(QTextBrowser):
             return
         st, src = S.stats, S.source
         esc = html.escape
+        t = style.T()
         period = f"{fmt_time(S.t_first, False)} ~ {fmt_time(S.t_last, False)}" if S.tl_t else "-"
         rows = [
             ("파일", esc(src.label)),
             ("시리얼", esc(src.serial or "-")),
             ("수집 시각", esc(src.collected or "-")),
             ("메모", esc(src.memo or "-")),
-            ("로그 기간", f"{period}<br><span style='color:#607d8b'>재생 길이(공백 압축) {fmt_duration(S.vt_end)}</span>"),
+            ("로그 기간", f"{period}<br><span style='color:{t.hint}'>재생 길이(공백 압축) {fmt_duration(S.vt_end)}</span>"),
             ("로그 파일", f"{st['files']}개 / {st['lines']:,}줄"),
             ("SW 버전", esc(" → ".join(st["sw_versions"]) or "-")),
             ("부팅", f"{st['boots']}회" + (" : " + ", ".join(self._link(b, fmt_time(b.t, False)[5:16]) for b in S.boots[:12]) if S.boots else "")),
@@ -479,15 +572,15 @@ class SummaryPanel(QTextBrowser):
             ("배터리", f"{st['battery_min']}% ~ {st['battery_max']}%" if st["battery_min"] is not None else "-"),
             ("맵", esc(str(src.map_dir.name) if src.map_dir else "없음")),
         ]
-        out = ["<style>td{padding:2px 8px 2px 0;vertical-align:top} th{text-align:left;color:#455a64;padding-right:8px}"
-               "h3{color:#1565c0;margin:10px 0 4px 0}</style>", "<h3>로그 정보</h3><table>"]
+        out = [f"<style>td{{padding:2px 8px 2px 0;vertical-align:top}} th{{text-align:left;color:{t.hint};padding-right:8px}}"
+               f"h3{{color:{t.accent};margin:10px 0 4px 0}} a{{color:{t.accent}}}</style>", "<h3>로그 정보</h3><table>"]
         out += [f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in rows]
         out.append("</table><h3>에러 발생 (코드별)</h3>")
         if st["errors"]:
             out.append("<table><tr><th>코드</th><th>횟수</th><th>내용</th><th>최초 발생</th></tr>")
             for code, n in st["errors"].most_common():
                 first = st["error_first"][code]
-                out.append(f"<tr><td style='color:#c62828'><b>{esc(code)}</b></td><td>{n}</td>"
+                out.append(f"<tr><td style='color:{t.error}'><b>{esc(code)}</b></td><td>{n}</td>"
                            f"<td>{esc(st['error_desc'].get(code, ''))}</td>"
                            f"<td>{self._link(first, fmt_time(first.t, False)[5:])}</td></tr>")
             out.append("</table>")

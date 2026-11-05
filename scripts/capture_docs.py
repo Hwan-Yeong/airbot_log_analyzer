@@ -6,6 +6,7 @@
         [--nas-search 단어]   NAS 창 검색어
         [--demo-nas]          데모 압축으로 가짜 NAS 폴더를 만들어 NAS 창 캡처
         [--origin 문구]       상태바 출처 표시 (기본: 파일 경로)
+        [--theme dark]        다크 테마로 캡처
 """
 import argparse
 import bisect
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import QApplication, QToolBar  # noqa: E402
 
 from airbotlog.loader import load_session  # noqa: E402
 from airbotlog.nas import LocalNasSource  # noqa: E402
+from airbotlog.settings import Settings  # noqa: E402
 from airbotlog.ui.main_window import MainWindow  # noqa: E402
 from airbotlog.ui.nas_dialog import NasDialog  # noqa: E402
 from airbotlog.ui.style import apply_style  # noqa: E402
@@ -90,13 +92,16 @@ def main():
     ap.add_argument("--demo-nas", action="store_true")
     ap.add_argument("--history", type=int, default=3, help="누적 표시 콤보 인덱스 (3=30분, 6=전체)")
     ap.add_argument("--origin", default="", help="상태바에 표시할 출처 (예: NAS: 폴더/파일.zip)")
+    ap.add_argument("--theme", default="light", choices=["light", "dark"])
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
     app = QApplication([])
-    apply_style(app)
-    win = MainWindow()
+    apply_style(app, args.theme)
+    cfg_dir = tempfile.TemporaryDirectory(prefix="airbotcap_")     # 개인 설정 영향 없음 (끝나면 자동 삭제)
+    settings = Settings(user_path=Path(cfg_dir.name) / "settings.yaml")
+    win = MainWindow(settings)
     win.resize(*SIZE)
     win.show()
     pump(app)
@@ -162,6 +167,7 @@ def main():
             shutil.rmtree(tmp, ignore_errors=True)
 
     win.close()
+    cfg_dir.cleanup()
     print("saved:", ", ".join(sorted(p.name for p in out.glob("*.png"))))
 
 

@@ -127,6 +127,17 @@ class Session:
             return self.tl_rt[0]
         return self.tl_rt[k] + max(vt - self.tl_vt[k], 0.0)
 
+    def vt_at_rt(self, rt: float) -> float:
+        """실제 경과 시간 rt 에 해당하는 재생 위치. 압축된 공백 안이면 공백 끝(다음 로그)으로 간다."""
+        if not self.tl_rt:
+            return 0.0
+        k = bisect.bisect_right(self.tl_rt, rt) - 1
+        if k < 0:
+            return 0.0
+        if k >= len(self.tl_rt) - 1:
+            return self.vt_end
+        return self.tl_vt[k] + min(rt - self.tl_rt[k], self.tl_vt[k + 1] - self.tl_vt[k])
+
     def line_at(self, vt: float) -> int:
         """vt 시점의 마지막 처리 줄 (전역 줄 번호)."""
         if not self.tl_vt:
