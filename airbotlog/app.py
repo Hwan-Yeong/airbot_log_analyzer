@@ -1,10 +1,35 @@
 """실행 진입점: python run.py [로그 파일/폴더 ...]"""
 import argparse
 import atexit
+import faulthandler
+import os
 import signal
 import sys
+from datetime import datetime
 
 from . import APP_NAME, __version__
+from .settings import user_cache_dir
+
+_crash_file = None
+
+
+def enable_crash_log():
+    """비정상 종료(세그폴트 등) 시 모든 스레드의 파이썬 스택을 crash.log 에 남긴다."""
+    global _crash_file
+    try:
+        d = user_cache_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / "crash.log"
+        if path.exists() and path.stat().st_size > 1_000_000:
+            path.unlink()
+        _crash_file = open(path, "a", encoding="utf-8")
+        _crash_file.write(f"=== {datetime.now():%Y-%m-%d %H:%M:%S} {APP_NAME} {__version__} 시작 (pid {os.getpid()})\n")
+        _crash_file.flush()
+        faulthandler.enable(file=_crash_file, all_threads=True)
+        return path
+    except OSError:
+        faulthandler.enable(all_threads=True)
+        return None
 
 
 def binding_ok() -> bool:
@@ -25,6 +50,7 @@ def main(argv=None):
     parser.add_argument("--nas", action="store_true", help="시작하면서 NAS 목록 열기")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     args = parser.parse_args(argv)
+    enable_crash_log()
 
     try:
         from PySide6.QtCore import QTimer

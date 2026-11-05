@@ -104,6 +104,7 @@ def main():
     S = load_session([args.archive], win.ws, win.settings, win.rules)
     win._origin = args.origin
     win.set_session(S)
+    win.lbl_ws.setText("임시 폴더: <OS 임시 폴더>/airbotlog_… (종료 시 자동 삭제)")  # 캡처마다 바뀌지 않게
     win.layer_panel.cmb_history.setCurrentIndex(args.history)
     win.set_vt(best_moment(S, window=1800.0 if args.history == 3 else 1e9), "seek")
     win.map_view.fit()

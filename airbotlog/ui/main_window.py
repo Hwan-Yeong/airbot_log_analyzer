@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QFileDialog, QGridLayout, QLabel, QMainWindow, QMessageBox, QProgressDialog,
+from PySide6.QtWidgets import (QDialog, QFileDialog, QGridLayout, QLabel, QMainWindow, QMessageBox, QProgressBar,
                                QScrollArea, QSplitter, QStyle, QTabWidget, QToolBar, QVBoxLayout, QWidget)
 
 from .. import APP_NAME, __version__
@@ -24,10 +24,39 @@ from .map_view import MapView
 from .nas_dialog import NasDialog, NasPathDialog
 from .panels import ErrorPanel, EventPanel, LayerPanel, SummaryPanel
 from .timeline import PlaybackBar
-from .workers import FuncWorker
+from .workers import BackgroundJob
 
 TICK_MS = 40
 SLOW_UI_SEC = 0.2
+
+
+class LoadingDialog(QDialog):
+    """불러오기 진행 창. QProgressDialog 와 달리 값 갱신 중 이벤트를 중첩 처리하지 않는다."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("불러오기")
+        self.setWindowModality(Qt.WindowModal)
+        self.setMinimumWidth(480)
+        lay = QVBoxLayout(self)
+        self.label = QLabel(text)
+        self.label.setWordWrap(True)
+        lay.addWidget(self.label)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        lay.addWidget(self.bar)
+
+    def set_progress(self, msg, frac):
+        self.label.setText(msg)
+        if frac is None:
+            self.bar.setRange(0, 0)
+        else:
+            if self.bar.maximum() == 0:
+                self.bar.setRange(0, 1000)
+            self.bar.setValue(int(min(max(frac, 0.0), 1.0) * 1000))
+
+    def closeEvent(self, e):  # 사용자가 닫아도 작업은 계속, 끝나면 결과 표시
+        e.accept()
 
 
 class MainWindow(QMainWindow):
@@ -237,29 +266,26 @@ class MainWindow(QMainWindow):
         if self._worker is not None:
             return
         self.pause()
-        dlg = QProgressDialog(f"불러오는 중: {title}", None, 0, 1000, self)
-        dlg.setWindowTitle("불러오기")
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setMinimumDuration(0)
-        dlg.setMinimumWidth(460)
-        dlg.setValue(0)
-        self._worker = FuncWorker(job, self)
-
-        def on_progress(msg, frac):
-            dlg.setLabelText(msg)
-            if frac < 0:
-                dlg.setRange(0, 0)
-            else:
-                dlg.setRange(0, 1000)
-                dlg.setValue(int(frac * 1000))
+        dlg = LoadingDialog(f"불러오는 중: {title}", self)
+        dlg.show()
+        self._worker = BackgroundJob(job, self)
 
         def finish():
             self._worker = None
             dlg.close()
+            dlg.deleteLater()
 
-        self._worker.progress.connect(on_progress)
-        self._worker.done.connect(lambda s: (finish(), self.set_session(s)))
-        self._worker.failed.connect(lambda m: (finish(), QMessageBox.warning(self, "불러오기 실패", m)))
+        def done(session):
+            finish()
+            self.set_session(session)
+
+        def failed(msg):
+            finish()
+            QMessageBox.warning(self, "불러오기 실패", msg)
+
+        self._worker.on_progress = dlg.set_progress
+        self._worker.on_done = done
+        self._worker.on_failed = failed
         self._worker.start()
 
     # ------------------------------------------------------------ 세션 표시
@@ -520,6 +546,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):
         self.pause()
         if self._worker is not None:
-            self._worker.wait(15000)   # 로드 중이면 끝날 때까지 잠시 대기 (임시 폴더 정리 전)
+            self._worker.detach()
+            self._worker.wait(15)      # 로드 중이면 끝날 때까지 잠시 대기 (임시 폴더 정리 전, 초)
         self.ws.cleanup()
         super().closeEvent(e)

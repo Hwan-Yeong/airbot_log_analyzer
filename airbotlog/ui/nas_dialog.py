@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout
 
 from ..nas import load_index_cache, resolve_source, save_index_cache
 from .panels import match_query, parse_query
-from .workers import FuncWorker, detach
+from .workers import BackgroundJob
 
 
 def _size(n: int) -> str:
@@ -145,10 +145,10 @@ class NasDialog(QDialog):
         self.btn_refresh.setEnabled(False)
         self.lbl_status.setText("NAS 목록 조회 중...")
         src = self.source
-        self._worker = FuncWorker(lambda prog: src.list_archives(prog), self)
-        self._worker.progress.connect(lambda m, _f: self.lbl_status.setText(m))
-        self._worker.done.connect(self._on_listed)
-        self._worker.failed.connect(self._on_failed)
+        self._worker = BackgroundJob(lambda prog: src.list_archives(prog), self)
+        self._worker.on_progress = lambda m, _f: self.lbl_status.setText(m)
+        self._worker.on_done = self._on_listed
+        self._worker.on_failed = self._on_failed
         self._worker.start()
 
     def _on_listed(self, entries):
@@ -215,7 +215,8 @@ class NasDialog(QDialog):
             self.lbl_status.setText(f"검색 결과 {shown:,}개 / 전체 {len(self.entries):,}개")
 
     def done(self, result):
-        detach(self._worker)   # 목록 조회 중 닫아도 안전하게
+        if self._worker is not None:
+            self._worker.detach()   # 목록 조회 중 닫아도 안전하게 (스레드는 스스로 끝남)
         self._worker = None
         super().done(result)
 

@@ -47,3 +47,4 @@ sudo mount -t cifs "//<NAS 서버>/<공유 폴더>/<로그 폴더>" \
 | `Could not load the Qt platform plugin "xcb"` | `sudo apt install libxcb-cursor0` |
 | NAS 접근 오류 | Windows 탐색기에서 NAS 경로를 한 번 열어 로그인 / Ubuntu는 마운트 확인 |
 | 임시 폴더 위치 | OS 임시 폴더의 `airbotlog_*` (종료 시 삭제, 비정상 종료분은 다음 실행 때 정리) |
+| 프로그램이 갑자기 종료됨 | 사용자 캐시 폴더의 `crash.log` 전달 (Windows `%LOCALAPPDATA%\airbot-log-analyzer\`, Linux `~/.cache/airbot-log-analyzer/`) |
