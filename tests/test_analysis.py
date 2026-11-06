@@ -237,4 +237,20 @@ def test_system_prompt_includes_full_guideline():
     assert len(g) > 1000                                              # config/analysis/guideline.md
     sp = ai.load_system_prompt(g)
     assert "<guideline>" in sp and g.strip()[:200] in sp
-    assert ai.guideline_path("/nonexistent/x.md") == ai.GUIDELINE_PATH
+    assert ai.guideline_path("/nonexistent/x.md") == ai.local_first(ai.GUIDELINE_PATH)
+
+
+def test_local_only_files_take_precedence(tmp_path):
+    """공개 저장소용 예시 파일 옆에 이 PC 전용 사본(*.local.*)이 있으면 그것을 사용 (git 제외 파일)."""
+    from airbotlog.settings import Settings
+    g = tmp_path / "guideline.md"
+    g.write_text("예시 지침", encoding="utf-8")
+    assert ai.local_first(g) == g
+    (tmp_path / "guideline.local.md").write_text("상세 지침", encoding="utf-8")
+    assert ai.local_first(g) == tmp_path / "guideline.local.md"
+    (tmp_path / "settings.yaml").write_text("nas: {root: ''}\nplayback: {speed: 10}\n", encoding="utf-8")
+    (tmp_path / "settings.local.yaml").write_text("nas: {root: 'LOCAL_ROOT'}\n", encoding="utf-8")
+    s = Settings(defaults_path=tmp_path / "settings.yaml", user_path=tmp_path / "user.yaml")
+    assert s.get("nas.root") == "LOCAL_ROOT" and s.get("playback.speed") == 10
+    s.set_user("nas.root", "USER_ROOT")
+    assert Settings(defaults_path=tmp_path / "settings.yaml", user_path=tmp_path / "user.yaml").get("nas.root") == "USER_ROOT"

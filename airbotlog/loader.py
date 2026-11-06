@@ -4,6 +4,7 @@ from pathlib import Path
 from .mapdata import load_map
 from .parser import parse_session
 from .rules import RuleSet
+from .versions import apply_versions
 from .workspace import Workspace, prepare_map, prepare_source
 
 
@@ -20,6 +21,8 @@ def load_session(inputs, ws: Workspace, settings, rules: RuleSet = None, progres
         source.map_dir = prepare_map(map_override, ws, skip=skip, progress=progress)
     session = parse_session(source, rules, idle_gap=float(settings.get("playback.idle_gap_sec", 5.0)),
                             progress=progress)
+    progress("버전 정보 정리 (airbot_log + otalog)", None)
+    apply_versions(session)
     if source.map_dir:
         try:
             session.map = load_map(source.map_dir)

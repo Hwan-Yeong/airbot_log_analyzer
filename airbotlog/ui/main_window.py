@@ -112,13 +112,18 @@ class MainWindow(QMainWindow):
         self.hud_err.setObjectName("hudErr")
         self.hud_err.setAttribute(Qt.WA_TransparentForMouseEvents)
         grid.addWidget(self.hud_err, 0, 0, Qt.AlignTop | Qt.AlignRight)
+        self.hud_res = QLabel("")                       # 자원 상태창 (메모리·AP 온도)
+        self.hud_res.setObjectName("hud")
+        self.hud_res.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.hud_res.setTextFormat(Qt.RichText)
+        grid.addWidget(self.hud_res, 0, 0, Qt.AlignBottom | Qt.AlignRight)
         self.empty = QLabel("로그 압축 파일(zip / AMR_LOG.tar.gz)이나 폴더를 여기에 끌어다 놓거나\n"
                             "[열기] 또는 [NAS] 버튼으로 불러오세요.")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setObjectName("empty")
         self.empty.setAttribute(Qt.WA_TransparentForMouseEvents)
         grid.addWidget(self.empty, 0, 0, Qt.AlignCenter)
-        for w in (self.hud, self.hud_err):
+        for w in (self.hud, self.hud_err, self.hud_res):
             w.hide()
 
         self.playbar = PlaybackBar()
@@ -145,6 +150,8 @@ class MainWindow(QMainWindow):
         self.layer_panel.changed.connect(self._apply_display)
         self._restore_view_prefs()
         self.layer_panel.trailChanged.connect(self._on_trail_changed)
+        for chk in (self.layer_panel.chk_hud, self.layer_panel.chk_hud_res):
+            chk.toggled.connect(lambda _on: self._save_view_prefs())
         self.layer_panel.robotSizeChanged.connect(lambda v: (self.map_view.set_robot_size(v), self._save_view_prefs()))
         self.layer_panel.stationSizeChanged.connect(lambda v: (self.map_view.set_station_size(v), self._save_view_prefs()))
         self.layer_panel.layerSizeChanged.connect(lambda lid, v: (self.map_view.set_layer_size(lid, v), self._save_view_prefs()))
@@ -332,8 +339,7 @@ class MainWindow(QMainWindow):
         self.playbar.bar.set_range(S.vt_end)
         self.playbar.bar.set_marks(self._timeline_marks(S))
         self.empty.setVisible(False)
-        for w in (self.hud,):
-            w.show()
+        self._apply_hud_visibility()
         src = S.source
         label = src.label + (f"  ·  {src.serial}" if src.serial else "")
         self.setWindowTitle(f"{APP_NAME} {__version__}  —  {label}")
@@ -367,8 +373,17 @@ class MainWindow(QMainWindow):
         mv.layer_visible.update(lp.layer_visibility())
         mv.set_static_visible("keepout", lp.chk_keepout.isChecked())
         mv.set_static_visible("station", lp.chk_station.isChecked())
+        self._apply_hud_visibility()
         if self.session:
             mv.update_frame(self.vt, lp.history_sec())
+
+    def _apply_hud_visibility(self):
+        lp = self.layer_panel
+        has = self.session is not None
+        self.hud.setVisible(has and lp.chk_hud.isChecked())
+        self.hud_res.setVisible(has and lp.chk_hud_res.isChecked())
+        if self.hud_res.isVisible():                      # 숨겨져 있던 동안 갱신되지 않았으므로 다시 그림
+            self.hud_res.setText(self._resource_text(self.session, self.vt))
 
     # ---- 테마
     def _update_theme_button(self):
@@ -462,23 +477,54 @@ class MainWindow(QMainWindow):
             return html.escape(str(val)) if val is not None else "-"
 
         pose = S.pose_at(vt)
+        ver = S.track_at("version", vt)                 # SW:FW:AI (SoC 로 보내는 버전, 없으면 otalog OTA 완료 버전)
+        ver = html.escape(str(ver)) if ver is not None else v("sw_version")
         lines = [f"<span style='font-size:11pt;font-weight:bold'>{fmt_time(t)}</span>",
                  f"상태 <b>{v('robot_state')}</b> · 주행 <b>{v('navi_state')}</b> · <b>{v('robot_status')}</b>",
-                 f"배터리 <b>{v('battery')}</b> · 스테이션 <b>{v('station')}</b> · SW <b>{v('sw_version')}</b>"]
+                 f"배터리 <b>{v('battery')}</b> · 스테이션 <b>{v('station')}</b>",
+                 f"버전(SW:FW:AI) <b>{ver}</b>"]
         extra = [f"{label} <b>{v(name)}</b>" for label, name in
-                 (("바닥ToF", "floor_tof"), ("라이다", "scan"), ("팔로우", "follow"))
+                 (("라이다", "lidar"), ("바닥ToF", "floor_tof"), ("팔로우", "follow"))
                  if S.track_at(name, vt) is not None]
         if extra:
             lines.append(" · ".join(extra))
         if pose:
             lines.append(f"<span style='color:#b0bec5'>위치 ({pose[0]:.2f}, {pose[1]:.2f}) {pose[2]:.0f}°</span>")
         self.hud.setText("<br>".join(lines))
+        if self.hud_res.isVisible():
+            self.hud_res.setText(self._resource_text(S, vt))
         active = S.active_errors(vt)
         if active:
             self.hud_err.setText("활성 에러: " + ", ".join(active.keys()))
             self.hud_err.show()
         else:
             self.hud_err.hide()
+
+    @staticmethod
+    def _ago(S, vt, vt_rec):
+        sec = max(S.rt_at(vt) - S.rt_at(vt_rec), 0.0)
+        if sec < 60:
+            return f"{sec:.0f}초 전"
+        if sec < 3600:
+            return f"{sec / 60:.0f}분 전"
+        return f"{sec / 3600:.1f}시간 전"
+
+    def _resource_text(self, S, vt):
+        """자원 상태: 메모리(10분 주기 기록), AP 온도(임계 초과 경고 때만 기록), SoC 온도(있으면)."""
+        hint = style.T().hint
+        rows = ["<b>자원 상태</b>"]
+        mem, mvt = S.track_point("memory", vt)
+        rows.append(f"메모리 <b>{html.escape(str(mem))}</b> <span style='color:{hint}'>({self._ago(S, vt, mvt)})</span>"
+                    if mem is not None else f"메모리 <span style='color:{hint}'>기록 없음</span>")
+        ap, avt = S.track_point("ap_temp", vt)
+        if ap is None:
+            rows.append(f"AP 온도 <span style='color:{hint}'>경고 기록 없음 (임계 미만)</span>")
+        else:
+            rows.append(f"AP 온도 <b>{html.escape(str(ap))}</b> <span style='color:{hint}'>({self._ago(S, vt, avt)} 경고 기록)</span>")
+        soc, svt = S.track_point("soc_temp", vt)
+        if soc is not None:
+            rows.append(f"SoC 온도 <b>{html.escape(str(soc))}</b> <span style='color:{hint}'>({self._ago(S, vt, svt)})</span>")
+        return "<br>".join(rows)
 
     def jump_to_event(self, ev):
         if self.session is None or ev is None:
@@ -611,10 +657,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "분석", "먼저 로그를 불러오세요.")
             return
         from .analysis_dialog import AnalysisDialog
-        self.pause()
-        self._analysis = AnalysisDialog(self)
-        self._analysis.show()
-        self._analysis.raise_()
+        dlg = getattr(self, "_analysis", None)
+        if dlg is None or not dlg.isVisible() or dlg.S is not self.session:
+            self._analysis = dlg = AnalysisDialog(self)      # 비모달: 열어 둔 채로 재생·이동 가능
+        dlg.show()
+        dlg.raise_()
 
     def edit_nas_path(self):
         NasPathDialog(self.settings, self).exec()

@@ -192,6 +192,14 @@ class Session:
         i = bisect.bisect_right(tr[0], vt) - 1
         return tr[1][i] if i >= 0 else None
 
+    def track_point(self, name: str, vt: float):
+        """(값, 그 값이 기록된 vt) — 마지막 기록이 얼마 전인지 표시할 때."""
+        tr = self.tracks.get(name)
+        if not tr:
+            return None, None
+        i = bisect.bisect_right(tr[0], vt) - 1
+        return (tr[1][i], tr[0][i]) if i >= 0 else (None, None)
+
     def active_errors(self, vt: float) -> "OrderedDict":
         """vt 시점에 활성인 에러 {코드: Event(발생)}."""
         active = OrderedDict()

@@ -22,6 +22,10 @@ ZIP_NAME = "20261101153000_DEMOBOTSN000000001.zip"
 STATION = (-0.3, 0.0, 0.0)
 KEEPOUTS = [[(9.0, 5.0), (10.8, 5.0), (10.8, 6.8), (9.0, 6.8)],
             [(-10.8, -6.8), (-9.0, -6.8), (-9.0, -5.0), (-10.8, -5.0)]]
+SW_VERSION = "6.40"
+VERSION = f"{SW_VERSION}:2.10:3.36"                 # SoC 로 보내는 SW:FW:AI (데모 값)
+OTA_HISTORY = [(datetime(2026, 9, 28, 14, 2, 11), "6.38:2.10:3.36", "6.31:2.09:3.35"),   # (시작, 목표, 이전)
+               (datetime(2026, 10, 27, 10, 15, 40), VERSION, "6.38:2.10:3.36")]
 
 
 # ---------------------------------------------------------------- 맵
@@ -141,13 +145,34 @@ class Log:
         self.emit("state_manager", f"[moveToTarget] robot ({self.x:.2f}, {self.y:.2f}, {self.yaw:.2f}(DEG)) "
                                    f"send goal({x:.2f}, {y:.2f}, {yaw:.2f}(DEG))", dt=0.1)
 
-    def boot(self, version="6.40"):
+    def boot(self, version=SW_VERSION):
         self.emit("heartbeat_check", "Heartbeat updated: 1")
         self.emit("heartbeat_check", f"📄 Expected software version: {version}")
         self.emit("airbot_logging", "node initialized", dt=1.5)
         self.emit("airbot_error_manager", "node initialized", dt=0.1)
         self.emit("airbot_node_manager", "node initialized", dt=0.1)
         self.emit("airbot_node_manager", "NAVI BRINGUP NODE, Process started successfully with PID: 1399", dt=2.0)
+        self.emit("udp_interface", f"Send to SocSoftware Version : {version}:0.0:0.0")   # FW·AI 버전 확인 전
+
+    def soc_connected(self):
+        """SoC 시간 동기화 직후 SW:FW:AI 버전 송신."""
+        self.emit("udp_interface", f"Send to SocSoftware Version : {VERSION}")
+
+    def lidar_on(self):
+        """주행 시작 전 라이다 켜기 (켜기 명령 → 켜짐 확인 → 상태 ON, 0.5초)."""
+        self.emit("state_manager", "publishLidarOn")
+        self.emit("scan_monitor", "[lidar_cmd_callback] Lidar ON")
+        self.emit("state_manager", "[lidarSensorOnchecker] lidarSensor is ON", dt=0.4)
+        self.emit("scan_monitor", "[checkScanState] Lidar ON, prevState[0](0:OFF, 1:ON, 2:STARTING, 3:STOPING) "
+                                  "lidarCmd[ON] Front[ON] Back[ON]", dt=0.1)
+
+    def lidar_off(self):
+        """도킹 후 라이다 끄기 (1초). 꺼져 있는 동안 checkScanHz 가 주기적으로 OFF 를 찍는다."""
+        self.emit("state_manager", "publishLidarOff", dt=0.3)
+        self.emit("scan_monitor", "[checkScanState] Lidar OFF, prevState[1](0:OFF, 1:ON, 2:STARTING, 3:STOPING) "
+                                  "lidarCmd[OFF] Front[OFF] Back[OFF]", dt=0.1)
+        for _ in range(3):
+            self.emit("scan_monitor", "[checkScanHz] scan state is front[OFF], back[OFF]", dt=0.2)
 
 
 def make_log_lines():
@@ -156,6 +181,7 @@ def make_log_lines():
     L.now = datetime(2026, 11, 1, 8, 59, 50)            # SoC 시간 동기화
     L.emit("udp_interface", "soc-cmd received : reqSetTimeData year : 2026, month : 11, day : 1, hour : 8, "
                             "minute : 59, second : 53")   # 페이로드 = SoC 시각 (SoC 시계가 약 3초 빠름)
+    L.soc_connected()
     L.emit("state_manager", "SET ROBOT_STATE STATE : ONSTATION", dt=1)
     L.emit("state_manager", "[setOnstationStatus] OnStation docking-Status hex[16]")
     L.emit("scan_monitor", "[checkScanHz] scan state is front[OFF], back[OFF]")
@@ -166,7 +192,7 @@ def make_log_lines():
     L.emit("udp_interface", "soc-cmd received : Move to Target (5.0, 5.0, 90.0(deg))", dt=30)
     L.state("ONSTATION", "UNDOCKING", soc="START_NAVIGATION")
     L.emit("state_manager", "[setOnstationStatus] Off-Station docking-Status hex[0e]", dt=0.5)
-    L.emit("scan_monitor", "[checkScanHz] scan state is front[ON], back[ON]", dt=0.5)
+    L.lidar_on()
     L.x, L.y, L.yaw = 0.0, 0.0, 0.0
     L.drive([(0.0, 0.0), (0.6, 0.0)])
     L.state("UNDOCKING", "NAVIGATION", robot="UNDOCKING_DONE_START_NAVIGATION")
@@ -230,7 +256,7 @@ def make_log_lines():
     L.emit("state_manager", "[Docking] detected on Docking Station!!!", dt=0.5)
     L.emit("state_manager", "[setOnstationStatus] OnStation docking-Status hex[16]", dt=0.1)
     L.state("DOCKING", "ONSTATION", robot="DONE_DOCKING")
-    L.emit("scan_monitor", "[checkScanHz] scan state is front[OFF], back[OFF]", dt=1.0)
+    L.lidar_off()
     L.batt -= 3
     L.battery(charging=True)
     L.idle(60, charging=True)
@@ -245,7 +271,9 @@ def make_log_lines():
     L.now = datetime(2026, 11, 1, 11, 32, 10)
     L.emit("udp_interface", "soc-cmd received : reqSetTimeData year : 2026, month : 11, day : 1, hour : 11, "
                             "minute : 32, second : 13")
+    L.soc_connected()
     L.emit("state_manager", "SET ROBOT_STATE STATE : ONSTATION", dt=1)
+    L.emit("scan_monitor", "[checkScanHz] scan state is front[OFF], back[OFF]")
     L.battery(charging=True)
     L.idle(30, charging=True)
 
@@ -253,11 +281,21 @@ def make_log_lines():
     L.emit("udp_interface", "soc-cmd received : Move to Target (8.0, -2.0, 0.0(deg))", dt=40)
     L.state("ONSTATION", "UNDOCKING", soc="START_NAVIGATION")
     L.emit("state_manager", "[setOnstationStatus] Off-Station docking-Status hex[0e]", dt=0.5)
+    L.lidar_on()
     L.x, L.y, L.yaw = 0.0, 0.0, 0.0
     L.drive([(0.0, 0.0), (0.6, 0.0)])
     L.state("UNDOCKING", "NAVIGATION", robot="UNDOCKING_DONE_START_NAVIGATION")
     L.goal(8.0, -2.0, 0.0)
-    L.drive([(0.6, 0.0), (3.0, 2.6), (7.1, 2.6), (7.1, -2.0), (8.0, -2.0)])
+
+    def overheat(log, step):
+        if step == 10:
+            log.emit("airbot_error_monitor", "[BoardOverheat] Warning: [cpu_thermal] / Temp [80.6]°C > threshold "
+                                             "[80.0]°C. Starting 30s timer.", "WARN")
+        if step == 22:
+            log.emit("airbot_error_monitor", "[BoardOverheat] Release: [cpu_thermal] / Temp [78.9]°C < threshold "
+                                             "[80.0]°C for 5 seconds.")
+
+    L.drive([(0.6, 0.0), (3.0, 2.6), (7.1, 2.6), (7.1, -2.0), (8.0, -2.0)], on_step=overheat)
     L.emit("state_manager", "[goalResultCallback] Goal reached successfully. robot(8.00, -2.00, 0.00(DEG)), "
                             "goal(8.00, -2.00, 0.00(DEG)) moving time[45.00]", dt=0.5)
     L.emit("odom_monitor", "[IMU_monitor]IMU anomaly detected! Unexpected yaw change. Actual Yaw Change: 0.041, "
@@ -274,6 +312,7 @@ def make_log_lines():
     L.emit("state_manager", "[Docking] detected on Docking Station!!!", dt=8)
     L.emit("state_manager", "[setOnstationStatus] OnStation docking-Status hex[16]", dt=0.1)
     L.state("DOCKING", "ONSTATION", robot="DONE_DOCKING")
+    L.lidar_off()
     L.batt -= 4
     L.battery(charging=True)
     L.idle(40, charging=True)
@@ -366,6 +405,10 @@ def make_soc_lines(times):
 
 def make_ota_lines(times):
     out = []
+    for t, target, current in OTA_HISTORY:                   # 이전 OTA 이력 (airbot_log 가 회전으로 잘려도 버전을 알 수 있음)
+        out.append(f"[{t:%Y-%m-%d %H:%M:%S}] [INFO] OTA Version : {target}")
+        out.append(f"[{t:%Y-%m-%d %H:%M:%S}] [INFO] Current Version : {current}")
+        out.append(f"[{t + timedelta(seconds=379):%Y-%m-%d %H:%M:%S}] [INFO] OTA process completed successfully.")
     start = datetime(2026, 11, 1, 8, 59, 45)
     out.append(f"[{start:%Y-%m-%d %H:%M:%S}] [INFO] Start OTA Process")
     out.append(f"[{start:%Y-%m-%d %H:%M:%S}] [INFO] OTA Process Running Version : 0.3.50")

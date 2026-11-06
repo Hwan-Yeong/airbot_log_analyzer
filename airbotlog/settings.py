@@ -1,6 +1,7 @@
 """설정 로드/저장.
 
 - 기본값: config/settings.yaml (레포에 포함, 앱이 수정하지 않음)
+- 이 PC 전용: config/settings.local.yaml (있으면 기본값 위에 적용, git 제외 — 공개하면 안 되는 NAS 경로 등)
 - 사용자 변경값: 사용자 설정 폴더의 settings.yaml (앱에서 저장)
     Windows : %APPDATA%/airbot-log-analyzer/settings.yaml
     Linux   : ~/.config/airbot-log-analyzer/settings.yaml
@@ -14,6 +15,7 @@ import yaml
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT_DIR / "config"
+LOCAL_SETTINGS = CONFIG_DIR / "settings.local.yaml"
 APP_ID = "airbot-log-analyzer"
 
 DEFAULTS = {
@@ -90,16 +92,18 @@ def _read_yaml(path: Path) -> dict:
 
 
 class Settings:
-    """기본값 + 레포 설정 + 사용자 설정을 합친 설정."""
+    """기본값 + 레포 설정 + 이 PC 전용 설정 + 사용자 설정을 합친 설정."""
 
-    def __init__(self, defaults_path: Path = None, user_path: Path = None):
+    def __init__(self, defaults_path: Path = None, user_path: Path = None, local_path: Path = None):
         self.defaults_path = defaults_path or CONFIG_DIR / "settings.yaml"
+        self.local_path = local_path or self.defaults_path.with_name("settings.local.yaml")
         self.user_path = user_path or user_config_dir() / "settings.yaml"
         self.reload()
 
     def reload(self):
         self._user = _read_yaml(self.user_path)
-        self.data = _deep_merge(_deep_merge(DEFAULTS, _read_yaml(self.defaults_path)), self._user)
+        base = _deep_merge(DEFAULTS, _read_yaml(self.defaults_path))
+        self.data = _deep_merge(_deep_merge(base, _read_yaml(self.local_path)), self._user)
 
     def get(self, dotted: str, default=None):
         cur = self.data

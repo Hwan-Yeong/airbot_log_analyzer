@@ -5,6 +5,7 @@
 import calendar
 import html
 import json
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -22,6 +23,7 @@ from ..analysis import request as areq
 from ..analysis import sources as asrc
 from ..analysis.masking import Masker
 from . import style
+from .hangul import HangulMode, attach as attach_hangul
 from .workers import BackgroundJob
 
 SOURCE_LABELS = [("amr", "AMR airbot_log"), ("ota", "AMR otalog"), ("journal", "AMR journal"), ("dmesg", "AMR dmesg"),
@@ -38,31 +40,6 @@ def _qdt(t: float) -> QDateTime:
 def _epoch(qdt: QDateTime) -> float:
     d, tm = qdt.date(), qdt.time()
     return calendar.timegm((d.year(), d.month(), d.day(), tm.hour(), tm.minute(), tm.second(), 0, 0, 0))
-
-
-class _Progress(QDialog):
-    def __init__(self, title, parent, on_cancel=None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setWindowModality(Qt.WindowModal)
-        self.setMinimumWidth(460)
-        lay = QVBoxLayout(self)
-        self.label = QLabel(title)
-        self.label.setWordWrap(True)
-        lay.addWidget(self.label)
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 0)
-        lay.addWidget(self.bar)
-        if on_cancel:
-            b = QPushButton("중단")
-            b.clicked.connect(on_cancel)
-            lay.addWidget(b, 0, Qt.AlignRight)
-
-    def set_progress(self, msg, _frac=None):
-        self.label.setText(msg)
-
-    def closeEvent(self, e):
-        e.ignore()      # 작업이 끝나면 코드에서 닫음
 
 
 class AnalysisDialog(QDialog):
@@ -97,6 +74,18 @@ class AnalysisDialog(QDialog):
         b_mail.setToolTip(".eml / .txt (Outlook 은 '다른 이름으로 저장 → .eml')")
         b_mail.clicked.connect(self.load_mail)
         row.addWidget(b_mail)
+        self.hangul = HangulMode(self)
+        self.btn_hangul = QPushButton("A")
+        self.btn_hangul.setCheckable(True)
+        self.btn_hangul.setFixedWidth(34)
+        self.btn_hangul.setToolTip("한글 입력 전환 (한/영 키 또는 Shift+Space)\n"
+                                   "WSL 에서는 Windows 한글 입력기가 전달되지 않아 앱이 직접 한글을 조합합니다")
+        self.btn_hangul.toggled.connect(self.hangul.set)
+        self.hangul.changed.connect(self._hangul_changed)
+        if sys.platform != "win32":          # Windows 는 OS 한글 입력기가 그대로 동작
+            row.addWidget(self.btn_hangul)
+        else:
+            self.btn_hangul.hide()
         self.lbl_extract = QLabel("")
         self.lbl_extract.setObjectName("hint")
         self.lbl_extract.setWordWrap(True)
@@ -164,10 +153,23 @@ class AnalysisDialog(QDialog):
         f4.addRow("지침", self.lbl_guide)
         lay.addWidget(g4)
 
-        note = QLabel("다음 단계에서 Claude 로 보낼 전체 내용을 확인한 뒤 보냅니다. 원래 값(시리얼·이름 등)은 이 PC 에만 남습니다.")
+        note = QLabel("다음 단계에서 Claude 로 보낼 전체 내용을 확인한 뒤 보냅니다. 원래 값(시리얼·이름 등)은 이 PC 에만 남습니다.\n"
+                      "분석하는 동안에도 메인 화면의 재생·이동은 그대로 쓸 수 있습니다.")
         note.setObjectName("hint")
         note.setWordWrap(True)
         lay.addWidget(note)
+        busy = QHBoxLayout()                 # 진행 상태 (창 안에 표시 — 메인 화면을 막지 않음)
+        self.lbl_busy = QLabel("")
+        self.bar_busy = QProgressBar()
+        self.bar_busy.setRange(0, 0)
+        self.bar_busy.setMaximumWidth(160)
+        self.btn_cancel = QPushButton("중단")
+        self._on_cancel = None
+        self.btn_cancel.clicked.connect(self._cancel_clicked)
+        busy.addWidget(self.lbl_busy, 1)
+        busy.addWidget(self.bar_busy)
+        busy.addWidget(self.btn_cancel)
+        lay.addLayout(busy)
         bb = QDialogButtonBox()
         self.btn_next = bb.addButton("미리보기 →", QDialogButtonBox.AcceptRole)
         bb.addButton("닫기", QDialogButtonBox.RejectRole)
@@ -179,7 +181,30 @@ class AnalysisDialog(QDialog):
         self._extract_timer.setInterval(400)
         self._extract_timer.timeout.connect(self.update_extract)
         self.ed_request.textChanged.connect(self._extract_timer.start)
+        self._hangul_inputs = attach_hangul(self.hangul, self.ed_request, self.ed_words)
+        self._preview = None
+        self._set_busy(None)
         self.update_extract()
+
+    def _hangul_changed(self, on: bool):
+        self.btn_hangul.blockSignals(True)
+        self.btn_hangul.setChecked(on)
+        self.btn_hangul.blockSignals(False)
+        self.btn_hangul.setText("한" if on else "A")
+
+    def _set_busy(self, msg, on_cancel=None):
+        """msg=None 이면 대기 상태. 작업 중에는 [미리보기] 를 막고 진행 문구·중단 버튼 표시."""
+        on = msg is not None
+        self.lbl_busy.setText(msg or "")
+        for w in (self.lbl_busy, self.bar_busy):
+            w.setVisible(on)
+        self.btn_cancel.setVisible(on and on_cancel is not None)
+        self._on_cancel = on_cancel
+        self.btn_next.setEnabled(not on)
+
+    def _cancel_clicked(self):
+        if self._on_cancel is not None:
+            self._on_cancel()
 
     # ------------------------------------------------------------ 요청
     def load_mail(self):
@@ -245,26 +270,25 @@ class AnalysisDialog(QDialog):
         serial = S.source.serial if S.source else ""
         req_text = areq.strip_signature(text)
         extract = areq.extract(req_text, ref, serial)
-        prog = _Progress("분석할 로그 모으는 중…", self)
-        prog.show()
+        if self._job is not None:
+            return
+        self._set_busy("분석할 로그 모으는 중…")
 
         def job(progress):
             return actx.build_context(S, req_text, extract, opt, progress)
 
         def done(ctx):
-            prog.hide()
-            prog.deleteLater()
+            self._set_busy(None)
             self._job = None
             self._show_preview(ctx, words)
 
         def failed(msg):
-            prog.hide()
-            prog.deleteLater()
+            self._set_busy(None)
             self._job = None
             QMessageBox.warning(self, "분석 준비 실패", msg)
 
         self._job = BackgroundJob(job, self)
-        self._job.on_progress = prog.set_progress
+        self._job.on_progress = lambda m, _f: self.lbl_busy.setText(m)
         self._job.on_done = done
         self._job.on_failed = failed
         self._job.start()
@@ -279,10 +303,14 @@ class AnalysisDialog(QDialog):
         guideline = ai.load_guideline(self.settings.get("analysis.guideline_file", "") or "")
         system_prompt = m.mask(ai.load_system_prompt(guideline))
         message = m.mask(ctx.user_message())
+        if self._preview is not None:
+            self._preview.close()
         dlg = PreviewDialog(self, system_prompt, message, m, ctx)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        self.run_claude(ctx, m, system_prompt, dlg.message())
+        dlg.setModal(False)                  # 메인 화면(재생)을 막지 않음
+        dlg.accepted.connect(lambda: self.run_claude(ctx, m, system_prompt, dlg.message()))
+        self._preview = dlg
+        dlg.show()
+        dlg.raise_()
 
     # ------------------------------------------------------------ Claude
     def run_claude(self, ctx, masker, system_prompt, message):
@@ -295,10 +323,11 @@ class AnalysisDialog(QDialog):
         schema = ai.load_schema()
         runner = ai.ClaudeRunner(exe, system_prompt, schema, model=self.settings.get("analysis.model", "") or "",
                                  timeout=float(self.settings.get("analysis.timeout_sec", 900)))
+        if self._job is not None:
+            return
         self._runner = runner
         known = ctx.ids
-        prog = _Progress("Claude 에 보내는 중…", self, on_cancel=runner.cancel)
-        prog.show()
+        self._set_busy("Claude 에 보내는 중…", on_cancel=runner.cancel)
 
         def job(progress):
             t0 = time.time()
@@ -317,8 +346,7 @@ class AnalysisDialog(QDialog):
             return result, meta
 
         def done(res):
-            prog.hide()
-            prog.deleteLater()
+            self._set_busy(None)
             self._job = None
             result, meta = res
             dlg = ResultDialog(self.mw, ctx, masker.unmask(result), meta, self.ed_request.toPlainText())
@@ -327,13 +355,12 @@ class AnalysisDialog(QDialog):
             dlg.raise_()
 
         def failed(msg):
-            prog.hide()
-            prog.deleteLater()
+            self._set_busy(None)
             self._job = None
             QMessageBox.warning(self, "Claude 분석 실패", msg)
 
         self._job = BackgroundJob(job, self)
-        self._job.on_progress = prog.set_progress
+        self._job.on_progress = lambda m, _f: self.lbl_busy.setText(m)
         self._job.on_done = done
         self._job.on_failed = failed
         self._job.start()
@@ -343,6 +370,10 @@ class AnalysisDialog(QDialog):
             self._runner.cancel()
         if self._job is not None:
             self._job.detach()
+            self._job = None
+        if self._preview is not None:
+            self._preview.close()
+            self._preview = None
         super().done(r)
 
 

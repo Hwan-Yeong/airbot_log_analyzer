@@ -177,7 +177,12 @@ class LayerPanel(QWidget):
         grid.addWidget(self.chk_follow, 5, 0, 1, 3)
         grid.addWidget(QLabel("누적 표시"), 6, 0)
         grid.addWidget(self.cmb_history, 6, 1, 1, 2)
-        for c in (self.chk_trail, self.chk_follow, self.chk_keepout, self.chk_station):
+        self.chk_hud = QCheckBox("상태창 (시각·상태·버전·라이다)")
+        self.chk_hud_res = QCheckBox("자원 상태창 (메모리·AP 온도)")
+        self.chk_hud_res.setToolTip("메모리: 10분 주기 기록, AP 온도: 임계 초과 경고가 있을 때만 기록됨")
+        grid.addWidget(self.chk_hud, 7, 0, 1, 3)
+        grid.addWidget(self.chk_hud_res, 8, 0, 1, 3)
+        for c in (self.chk_trail, self.chk_follow, self.chk_keepout, self.chk_station, self.chk_hud, self.chk_hud_res):
             c.setChecked(True)
             c.toggled.connect(self.changed)
         self.cmb_history.currentIndexChanged.connect(self.changed)
@@ -258,10 +263,12 @@ class LayerPanel(QWidget):
         return {"trail_mode": self.trail_mode(), "trail_count": self.spn_trail_count.value(),
                 "trail_width": self.spn_trail_width.value(), "robot_size": self.spn_robot.value(),
                 "station_size": self.spn_station.value(),
+                "hud": self.chk_hud.isChecked(), "hud_res": self.chk_hud_res.isChecked(),
                 "layer_sizes": {lid: sp.value() for lid, sp in self.layer_spins.items()}}
 
     def apply_prefs(self, p: dict):
-        widgets = (self.cmb_trail, self.spn_trail_count, self.spn_trail_width, self.spn_robot, self.spn_station)
+        widgets = (self.cmb_trail, self.spn_trail_count, self.spn_trail_width, self.spn_robot, self.spn_station,
+                   self.chk_hud, self.chk_hud_res)
         for w in widgets:
             w.blockSignals(True)
         modes = [m for _n, m in TRAIL_MODES]
@@ -270,6 +277,8 @@ class LayerPanel(QWidget):
         self.spn_trail_width.setValue(int(p.get("trail_width", 2)))
         self.spn_robot.setValue(int(p.get("robot_size", 18)))
         self.spn_station.setValue(int(p.get("station_size", 22)))
+        self.chk_hud.setChecked(bool(p.get("hud", True)))
+        self.chk_hud_res.setChecked(bool(p.get("hud_res", True)))
         for w in widgets:
             w.blockSignals(False)
         self._update_trail_widgets()
@@ -566,7 +575,7 @@ class SummaryPanel(QTextBrowser):
             ("메모", esc(src.memo or "-")),
             ("로그 기간", f"{period}<br><span style='color:{t.hint}'>재생 길이(공백 압축) {fmt_duration(S.vt_end)}</span>"),
             ("로그 파일", f"{st['files']}개 / {st['lines']:,}줄"),
-            ("SW 버전", esc(" → ".join(st["sw_versions"]) or "-")),
+            ("SW:FW:AI 버전", esc(" → ".join(st.get("versions") or st["sw_versions"]) or "-")),
             ("부팅", f"{st['boots']}회" + (" : " + ", ".join(self._link(b, fmt_time(b.t, False)[5:16]) for b in S.boots[:12]) if S.boots else "")),
             ("시간 역행/점프", f"{st['jumps']}회"),
             ("배터리", f"{st['battery_min']}% ~ {st['battery_max']}%" if st["battery_min"] is not None else "-"),

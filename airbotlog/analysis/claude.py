@@ -35,11 +35,20 @@ def _noop(*_args, **_kwargs):
     pass
 
 
+def local_first(path: Path) -> Path:
+    """같은 폴더에 이 PC 전용 사본(<이름>.local<확장자>, git 제외)이 있으면 그 파일을 사용.
+
+    공개 저장소에는 예시 지침·프롬프트만 두고, 상세 사양이 들어간 원본은 로컬에만 두기 위함.
+    """
+    local = path.with_name(f"{path.stem}.local{path.suffix}")
+    return local if local.is_file() else path
+
+
 def guideline_path(path_setting: str = "") -> Path:
-    """분석 지침 파일: 설정 analysis.guideline_file 이 있으면 그 파일(최신본), 없으면 config/analysis/guideline.md."""
+    """분석 지침 파일: 설정 analysis.guideline_file → config/analysis/guideline.local.md → guideline.md."""
     if path_setting and Path(path_setting).is_file():
         return Path(path_setting)
-    return GUIDELINE_PATH
+    return local_first(GUIDELINE_PATH)
 
 
 def load_guideline(path_setting: str = "") -> str:
@@ -52,7 +61,8 @@ def load_guideline(path_setting: str = "") -> str:
 
 def load_system_prompt(guideline: str = "") -> str:
     """역할·판단 규칙·출력 형식 + 분석 지침 전문 (지침의 모든 정보를 참고해 분석)."""
-    path = PROMPT_PATH if PROMPT_PATH.exists() else PROMPT_GENERIC_PATH
+    path = local_first(PROMPT_PATH)
+    path = path if path.exists() else PROMPT_GENERIC_PATH
     text = path.read_text(encoding="utf-8")
     if guideline.strip():
         text += ("\n\n[분석 지침 전문]\n아래 지침의 로그 형식·판정 규칙·시그니처·주의사항·과거 사례를 모두 참고해 분석합니다. "

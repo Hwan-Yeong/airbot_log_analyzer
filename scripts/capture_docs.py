@@ -8,9 +8,12 @@
         [--origin 문구]       상태바 출처 표시 (기본: 파일 경로)
         [--theme dark]        다크 테마로 캡처
         [--analysis 예시.json] [분석] 창·보낼 내용·결과 캡처 (docs/examples/analysis_demo.json: 데모 데이터로 실제 분석한 결과)
+        [--excel-out 파일]    --analysis 예시로 엑셀 분석표도 저장
+        [--gif 파일]          빠른 배속 재생 GIF (첫 이동 명령 ~ 마지막 도킹, Pillow 필요: pip install pillow)
 """
 import argparse
 import bisect
+import io
 import json
 import math
 import os
@@ -24,7 +27,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QBuffer, QIODevice, QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QFont, QPainter, QPen  # noqa: E402
 from PySide6.QtWidgets import QApplication, QToolBar  # noqa: E402
 
@@ -96,6 +99,12 @@ def main():
     ap.add_argument("--origin", default="", help="상태바에 표시할 출처 (예: NAS: 폴더/파일.zip)")
     ap.add_argument("--theme", default="light", choices=["light", "dark"])
     ap.add_argument("--analysis", default="", help="분석 예시 JSON (결과 캡처용, Claude 호출 없음)")
+    ap.add_argument("--excel-out", default="", help="--analysis 예시로 만든 엑셀 분석표 저장 경로")
+    ap.add_argument("--gif", default="", help="빠른 배속 재생 GIF 저장 경로")
+    ap.add_argument("--gif-frames", type=int, default=90)
+    ap.add_argument("--gif-ms", type=int, default=110, help="프레임 간격 (ms)")
+    ap.add_argument("--gif-width", type=int, default=960)
+    ap.add_argument("--gif-zoom", type=float, default=1.5, help="맵 전체 보기 대비 확대 배율")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -171,15 +180,63 @@ def main():
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    if args.gif:
+        capture_gif(app, win, S, Path(args.gif), args)
     if args.analysis:
-        capture_analysis(app, win, S, Path(args.archive), Path(args.analysis), out)
+        capture_analysis(app, win, S, Path(args.archive), Path(args.analysis), out,
+                         Path(args.excel_out) if args.excel_out else None)
 
     win.close()
     cfg_dir.cleanup()
     print("saved:", ", ".join(sorted(p.name for p in out.glob("*.png"))))
 
 
-def capture_analysis(app, win, S, archive: Path, example: Path, out: Path):
+def _pil(qimg):
+    from PIL import Image
+    buf = QBuffer()
+    buf.open(QIODevice.WriteOnly)
+    qimg.save(buf, "PNG")
+    return Image.open(io.BytesIO(bytes(buf.data()))).convert("RGB")
+
+
+def capture_gif(app, win, S, path: Path, args):
+    """빠른 배속 재생 GIF: 첫 이동 명령 직전 ~ 마지막 도킹 완료 직후 (전체 궤적 누적, 단차 마커 표시)."""
+    from PIL import Image
+    moves = [e.vt for e in S.events if e.rule == "soc_cmd" and "Move to Target" in e.text]
+    docks = [e.vt for e in S.events if e.rule == "docked"]
+    start = max(moves[0] - 2.0, 0.0) if moves else 0.0
+    end = min(docks[-1] + 4.0, S.vt_end) if docks and docks[-1] > start else S.vt_end
+    lp = win.layer_panel
+    lp.cmb_history.setCurrentIndex(lp.cmb_history.count() - 1)        # 전체
+    if "step" in lp.layer_checks:
+        lp.layer_checks["step"].setChecked(True)
+    win.tabs.setCurrentIndex(0)
+    win.map_view.fit()
+    if S.pose_x:                                                      # 주행 범위를 크게 (맵 전체 대신)
+        xs, ys = S.pose_x, S.pose_y
+        win.map_view.scale(args.gif_zoom, args.gif_zoom)
+        win.map_view.center_on_world((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
+    win.playbar.set_playing(True)
+    frames = []
+    n = max(args.gif_frames, 2)
+    for k in range(n):
+        win.set_vt(start + (end - start) * k / (n - 1), "seek")
+        pump(app, 0.05)
+        frames.append(_pil(win.grab().toImage().scaledToWidth(args.gif_width, Qt.SmoothTransformation)))
+    win.playbar.set_playing(False)
+    picks = [frames[i * (n - 1) // 5] for i in range(6)]                 # 공통 팔레트 (색 깜빡임 방지)
+    mosaic = Image.new("RGB", (frames[0].width, frames[0].height * len(picks)))
+    for i, f in enumerate(picks):
+        mosaic.paste(f, (0, f.height * i))
+    pal = mosaic.quantize(colors=255, method=Image.Quantize.MAXCOVERAGE)
+    q = [f.quantize(palette=pal, dither=Image.Dither.NONE) for f in frames]
+    durations = [args.gif_ms] * (n - 1) + [2000]                          # 마지막 장면 2초 유지
+    path.parent.mkdir(parents=True, exist_ok=True)
+    q[0].save(path, save_all=True, append_images=q[1:], duration=durations, loop=0, optimize=True)
+    print(f"gif: {path} ({path.stat().st_size / 1e6:.1f} MB, {n} frames, vt {start:.0f}~{end:.0f}s)")
+
+
+def capture_analysis(app, win, S, archive: Path, example: Path, out: Path, excel_out: Path = None):
     """[분석] 창 → 보낼 내용 확인 → 결과 (예시 JSON 의 실제 분석 결과를 그대로 표시, Claude 호출 없음)."""
     from PySide6.QtCore import QDate, QDateTime, QTime
 
@@ -218,6 +275,11 @@ def capture_analysis(app, win, S, archive: Path, example: Path, out: Path):
     pump(app, 0.4)
     pv.grab().save(str(out / "analysis_preview.png"))
     pv.close()
+    if excel_out:
+        from airbotlog.analysis import excel
+        excel_out.parent.mkdir(parents=True, exist_ok=True)
+        excel.save(excel_out, ctx, ex["result"], ex["meta"], title_prefix="Airbot")
+        print("excel:", excel_out)
     rd = ResultDialog(win, ctx, ex["result"], ex["meta"], text)
     rd.resize(1300, 820)
     rd.show()

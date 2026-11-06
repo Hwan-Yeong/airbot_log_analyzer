@@ -9,3 +9,17 @@ __pycache__/
 *.tgz
 /out/
 /dist/
+*.xlsx
+*.eml
+*.msg
+!docs/examples/*.xlsx
+# 이 PC 전용 — 공개하면 안 되는 설정·지침(config/*.local.*), 실제 로그·맵(local/ 등)
+*.local.*
+/local/
+airbot_log*.txt
+otalog*.log
+logcat*
+*.pgm
+station_pose.json
+# 예외: AI 로 생성한 데모 로그
+!examples/demo/*.zip

@@ -104,7 +104,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
     actual = (rc.get("log_time") or "-") + (f"  — 접수 대비 {rc.get('match')}" if rc.get("match") else "") + \
         (f"\n{rc['note']}" if rc.get("note") else "")
     for label, value in (("시료", ctx.session_label + (f" (수집 {ctx.meta['collected']})" if ctx.meta.get("collected") else "")),
-                         ("버전", "SW " + (", ".join(ctx.meta.get("sw_versions") or []) or "-")),
+                         ("버전 (SW:FW:AI)", " → ".join(ctx.meta.get("sw_versions") or []) or "-"),
                          ("접수 현상", claimed), ("실제 발생", actual)):
         put(ws, r, 2, label, bold=True)
         put(ws, r, 3, value)

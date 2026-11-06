@@ -121,7 +121,7 @@ class Context:
         o = self.options
         m = self.meta
         out = [f"- 시료: {self.session_label}" + (f" (수집 {m['collected']})" if m.get("collected") else ""),
-               f"- SW 버전(airbot_log): {', '.join(m.get('sw_versions') or []) or '-'}",
+               f"- 버전(SW:FW:AI, airbot_log·otalog): {' → '.join(m.get('sw_versions') or []) or '-'}",
                f"- 분석 구간(AMR 기준): {fmt_time(o.t0, False)} ~ {fmt_time(o.t1, False)} "
                f"(기준 시각 {fmt_time(o.anchor, False)}, 앞 {o.before / 60:g}분 / 뒤 {o.after / 60:g}분)",
                f"- 시계: {self.offset.describe()}",
@@ -410,7 +410,8 @@ def build_context(session, request_text: str, request_extract: dict, options: Op
             e.rid = rid_of.get(id(e.rec)) or fold_head.get(_fold_key(e.rec), "")
     summary = _summary_events(S, events, start=len(win_events))
 
-    meta = {"collected": getattr(S.source, "collected", ""), "sw_versions": S.stats.get("sw_versions", []),
+    meta = {"collected": getattr(S.source, "collected", ""),
+            "sw_versions": S.stats.get("versions") or S.stats.get("sw_versions", []),
             "boots": [fmt_time(b.t, False) for b in S.boots], "serial": getattr(S.source, "serial", ""),
             "jumps": [f"{fmt_time(j['t_from'], False)} → {fmt_time(j['t_to'], False)}" for j in S.jumps],
             "sources": sset.available()}

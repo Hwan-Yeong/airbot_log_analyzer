@@ -123,6 +123,34 @@ def test_view_prefs_saved_on_close(app, demo_zip, settings):
     assert Settings(user_path=settings.user_path).get("display.view")["robot_size"] == 37
 
 
+def test_hud_toggles_and_resource_hud(app, demo_zip, settings):
+    """기본 상태창·자원 상태창(메모리·AP 온도)을 각각 끄고 켬, 설정 저장. 버전은 SW:FW:AI 로 표시."""
+    from airbotlog.loader import load_session
+    from airbotlog.settings import Settings
+    from airbotlog.ui.main_window import MainWindow
+    w = MainWindow(settings)
+    w.show()
+    w.set_session(load_session([demo_zip], w.ws, w.settings, w.rules))
+    w.set_vt(w.session.vt_end, "seek")
+    app.processEvents()
+    lp = w.layer_panel
+    assert w.hud.isVisible() and w.hud_res.isVisible()
+    assert "6.40:2.10:3.36" in w.hud.text()
+    assert "메모리" in w.hud_res.text() and "AP 온도" in w.hud_res.text()
+    lp.chk_hud_res.setChecked(False)
+    app.processEvents()
+    assert w.hud.isVisible() and not w.hud_res.isVisible()
+    lp.chk_hud.setChecked(False)
+    app.processEvents()
+    assert not w.hud.isVisible()
+    lp.chk_hud_res.setChecked(True)
+    app.processEvents()
+    assert w.hud_res.isVisible() and "메모리" in w.hud_res.text()
+    w.close()
+    view = Settings(user_path=settings.user_path).get("display.view")
+    assert view["hud"] is False and view["hud_res"] is True
+
+
 @pytest.mark.skipif(__import__("sys").platform == "win32", reason="가짜 CLI 는 shebang 스크립트")
 def test_analysis_dialog_flow(app, win, tmp_path, monkeypatch):
     """[분석]: 요청 입력 → 미리보기(마스킹) → (가짜) Claude → 결과 → 행 더블클릭 이동 → 엑셀."""
@@ -135,21 +163,21 @@ def test_analysis_dialog_flow(app, win, tmp_path, monkeypatch):
     cli.write_text(FAKE_CLI.format(python=sys.executable, result=repr(_valid_result())), encoding="utf-8")
     cli.chmod(0o755)
     win.settings.set_user("analysis.claude_path", str(cli))
-    shown = {}
-
-    def fake_exec(dlg):
-        shown["message"] = dlg.message()
-        return ad.QDialog.Accepted
-
-    monkeypatch.setattr(ad.PreviewDialog, "exec", fake_exec)
     win.open_analysis()
     dlg = win._analysis
     dlg.ed_request.setPlainText("11월 1일 오전 9시 반쯤 주방 가다가 낙하 에러(S07-2) 나고 멈췄대요. 시리얼 DEMOBOTSN000000001")
     dlg.update_extract()
     assert dlg.cmb_hint.count() == 1 and dlg.dt_anchor.dateTime().toString("HH:mm") == "09:30"
+    win.toggle_play()                                   # 분석 창을 열어 둔 채 재생
     dlg.preview()
+    assert app.activeModalWidget() is None              # 진행 중에도 메인 화면을 막지 않음
+    assert _wait(app, lambda: dlg._preview is not None and dlg._preview.isVisible(), 30)
+    assert app.activeModalWidget() is None and win.playing
+    message = dlg._preview.message()
+    assert "DEMOBOTSN000000001" not in message and "SN_01" in message
+    dlg._preview.accept()                               # [Claude로 보내기]
     assert _wait(app, lambda: dlg.result_dialogs, 30)
-    assert "DEMOBOTSN000000001" not in shown["message"] and "SN_01" in shown["message"]
+    win.pause()
     res = dlg.result_dialogs[0]
     assert res.tbl.rowCount() == 1
     win.set_vt(0.0, "seek")

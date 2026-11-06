@@ -109,6 +109,13 @@ rules:
     regex: 'not received for (?P<sec>\d+) seconds\.\s*STATE\[(?P<st>\w+)\]'
     text: 'SOC 통신 끊김: DockingStatus {sec}초 미수신 (상태 {st})'
     level: error
+  - id: soc_sw_version
+    node: udp_interface
+    contains: Send to SocSoftware Version
+    regex: 'Send to SocSoftware Version : (?P<v>\d+\.\d+:(?!0\.0\b)\d+\.\d+:(?!0\.0\b)\d+\.\d+)'   # 부팅 직후 x:0.0:0.0 은 제외
+    track: version
+    value: '{v}'
+    list: false
   - id: memory
     node: airbot_error_monitor
     contains: Memory Usage
@@ -116,6 +123,23 @@ rules:
     track: memory
     value: '{p}%'
     list: false
+  - id: memory_exceeded
+    category: system
+    contains: Memory usage exceeded
+    regex: 'USED MEMORY\[(?P<p>[\d.]+)%\]'
+    text: '메모리 사용률 높음 ({p}%)'
+    level: warn
+    dedupe_sec: 600
+  - id: ap_overheat
+    category: system
+    node: airbot_error_monitor
+    contains: BoardOverheat
+    regex: '\[BoardOverheat\]\s*(?P<st>Warning|Error|Release)\b[^\[]*\[(?P<sensor>\w+)\][^\[]*Temp \[(?P<t>[\d.]+)\]'
+    text: 'AP 과열 {st}: {sensor} {t}°C'
+    level: warn
+    track: ap_temp
+    value: '{t}°C ({sensor} {st})'
+    dedupe_sec: 60
   - id: soc_temp
     node: udp_interface
     contains: 'resSocTemperatureNotice] soc:'
@@ -414,11 +438,40 @@ rules:
     level: warn
     dedupe_sec: 30
     dedupe_by: rule
+  # 라이다 상태: 켜기/끄기 명령과 확인 줄로 추적 ('scan state is' 줄은 라이다가 꺼져 있는 동안에만 주기적으로 찍힘)
+  - id: lidar_on_cmd
+    node: state_manager
+    contains: publishLidarOn
+    regex: 'publishLidarOn'
+    track: lidar
+    value: '켜는 중'
+    list: false
+  - id: lidar_on
+    node: state_manager
+    contains: lidarSensor is ON
+    regex: 'lidarSensor is ON'
+    track: lidar
+    value: 'ON'
+    list: false
+  - id: lidar_off_cmd
+    node: state_manager
+    contains: publishLidarOff
+    regex: 'publishLidarOff'
+    track: lidar
+    value: '끄는 중'
+    list: false
+  - id: lidar_check_state
+    node: scan_monitor
+    contains: '[checkScanState] Lidar'
+    regex: '\[checkScanState\] Lidar (?P<st>OFF|ON|STARTING|STOPPING)\b.*Front\[(?P<f>\w+)\] Back\[(?P<b>\w+)\]'
+    track: lidar
+    value: '{st} (F:{f} B:{b})'
+    list: false
   - id: scan_state
     node: scan_monitor
     contains: scan state is
     regex: 'scan state is front\[(?P<f>\w+)\], back\[(?P<b>\w+)\]'
-    track: scan
+    track: lidar
     value: 'F:{f} B:{b}'
     list: false
 

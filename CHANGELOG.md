@@ -1,5 +1,22 @@
 # 변경 이력
 
+## 1.2.1 - 2026-11-06
+- 수정: 주행 중 라이다 상태가 OFF 로 표시되던 문제
+  (`scan state is front[..], back[..]` 줄은 라이다가 꺼져 있는 동안에만 찍히는데 이 줄만 보고 있었음
+  → 켜기/끄기 명령 `publishLidarOn/Off` · 켜짐 확인 `lidarSensor is ON` · `checkScanState` 로 추적)
+- 추가: 상태창 버전을 **SW:FW:AI**(SoC 로 보내는 버전)로 표시. airbot_log 에 없으면 otalog 의 OTA 기록(마지막 완료 버전)으로
+  시각에 맞춰 채움. 요약 탭·분석 엑셀도 같은 버전 사용
+- 추가: **자원 상태창** (메모리, AP 온도) — AP 온도는 임계 초과 경고·해제 기록 기준. 메모리 90% 초과·AP 과열 이벤트
+- 추가: 표시 설정에서 기본 상태창·자원 상태창 각각 켜기/끄기 (설정 저장)
+- 추가: [분석] 요청 내용 **한글 입력** — WSL 에서 Windows 한글 입력기가 전달되지 않는 문제
+  → 앱 자체 두벌식 입력 ([A/한] 버튼 · 한/영 키 · Shift+Space)
+- 변경: [분석] 창·미리보기 창을 띄운 채로 메인 화면 재생·이동 가능 (진행 상태를 분석 창 안에 표시)
+- 데모 로그: 실제 형식의 라이다 켜기/끄기, SW:FW:AI 버전, OTA 이력, AP 과열 경고 줄 추가
+- 추가: **32평형 집 데모 로그** `examples/demo` (AI 로 생성한 가상 로그 — 카메라·1D ToF 장애물 회피, 문턱 단차로 S05, 충전 복귀),
+  생성 스크립트 `scripts/make_demo_home.py`
+- 추가: [기능 소개](docs/FEATURES.md) 문서와 빠른 배속 재생 GIF (`capture_docs.py --gif`), 분석 예시 엑셀 자동 생성(`--excel-out`)
+- 추가: 이 PC 전용 파일 — `config/settings.local.yaml`, `config/analysis/*.local.md` 가 있으면 우선 사용 (git 제외)
+
 ## 1.2.0 - 2026-11-06
 - 추가: **[분석] AI 현상 분석** — 요청(구어체 또는 메일 .eml) + 로그 타임라인을 Claude Code CLI 로 보내 '현상'까지 정리
   - airbot_log 외 otalog · journal/dmesg 스냅샷 · SoC logcat(압축 안에서 바로 읽음)을 AMR 시각으로 맞춰 통합
