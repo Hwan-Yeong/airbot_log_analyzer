@@ -443,10 +443,10 @@ class ResultDialog(QDialog):
         # 현상
         tb = QTextBrowser()
         esc = html.escape
-        parts = ["<h3>현상 상세</h3><ol>"]
+        parts = ["<h3>현상 상세</h3><ul style='list-style:none; margin-left:-24px'>"]   # 항목에 ①② 번호가 이미 있음
         for p in result.get("phenomenon_detail", []):
             parts.append(f"<li>{esc(p.get('text', ''))} <span style='color:{t.hint}'>[{', '.join(p.get('evidence', []))}]</span></li>")
-        parts.append("</ol><h3>접수 내용과 비교</h3>")
+        parts.append("</ul><h3>접수 내용과 비교</h3>")
         parts.append(f"<p>접수: {esc(rc.get('claimed_symptom', ''))} ({esc(rc.get('claimed_time', '') or '-')})<br>"
                      f"로그: {esc(rc.get('log_time', '') or '-')} — <b>{esc(rc.get('match', ''))}</b><br>{esc(rc.get('note', ''))}</p>")
         parts.append(f"<h3>신뢰도: {esc(conf.get('level', ''))}</h3><p>{esc(conf.get('reason', ''))}</p>")
