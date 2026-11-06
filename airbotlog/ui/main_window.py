@@ -29,7 +29,8 @@ from .panels import ErrorPanel, EventPanel, LayerPanel, SummaryPanel
 from .timeline import PlaybackBar
 from .workers import BackgroundJob
 
-TICK_MS = 40
+TICK_MS = 16                # 재생 화면 갱신 간격 (약 60fps — 로봇·카메라가 부드럽게 움직이도록)
+HUD_SEC = 0.08              # 재생 중 상태창·시각 글자 갱신 간격 (글자는 자주 바꿀 필요 없음)
 SLOW_UI_SEC = 0.2
 
 
@@ -92,7 +93,9 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_actions()
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.PreciseTimer)
         self.timer.timeout.connect(self._tick)
+        self._last_hud = 0.0
         if self.rules_error:
             QTimer.singleShot(0, lambda: QMessageBox.critical(self, "규칙 파일 오류", self.rules_error))
 
@@ -462,14 +465,18 @@ class MainWindow(QMainWindow):
         if S is None:
             return
         self.vt = min(max(vt, 0.0), S.vt_end)
-        self.map_view.update_frame(self.vt, self.layer_panel.history_sec())
+        play = origin == "play"
+        # 재생·멈춤·±초/타임라인 이동은 카메라가 부드럽게 따라감, 이벤트·로그 줄로 건너뛸 때는 바로 맞춤
+        self.map_view.update_frame(self.vt, self.layer_panel.history_sec(), smooth=origin in ("play", "pause", "seek"))
         self.playbar.bar.set_value(self.vt)
         t = S.time_at(self.vt)
-        self.playbar.lbl_time.setText(fmt_time(t))
-        self.playbar.lbl_pos.setText(f"  재생 {self._hms(self.vt)} / {self._hms(S.vt_end)}")
-        self._update_hud(t)
-        self.error_panel.update_vt(self.vt)
         now = time.monotonic()
+        if not play or now - self._last_hud > HUD_SEC:      # 재생 중 글자 갱신은 줄여 부하를 지도에 씀
+            self._last_hud = now
+            self.playbar.lbl_time.setText(fmt_time(t))
+            self.playbar.lbl_pos.setText(f"  재생 {self._hms(self.vt)} / {self._hms(S.vt_end)}")
+            self._update_hud(t)
+            self.error_panel.update_vt(self.vt)
         if origin != "play" or now - self._last_slow > SLOW_UI_SEC:
             self._last_slow = now
             self.event_panel.highlight_vt(self.vt)
@@ -607,7 +614,7 @@ class MainWindow(QMainWindow):
             self.timer.stop()
             self.playbar.set_playing(False)
             if self.session:
-                self.set_vt(self.vt, "seek")
+                self.set_vt(self.vt, "pause")
 
     def _tick(self):
         now = time.monotonic()

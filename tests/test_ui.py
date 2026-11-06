@@ -379,3 +379,64 @@ def test_analysis_anchor_prefers_log_period_and_confirms_empty_window(app, win, 
     assert _wait(app, lambda: dlg._preview is not None, 30)
     dlg._preview.close()
     dlg.close()
+
+
+def _robot_offset(mv):
+    import math
+    r = mv.mapFromScene(mv.robot.pos()) - mv.viewport().rect().center()
+    return math.hypot(r.x(), r.y())
+
+
+def test_follow_camera_is_smooth(app, win):
+    """로봇 따라가기: 재생 중 카메라가 매 프레임 조금씩 따라감 (가장자리에서 한 번에 튀지 않음),
+    이벤트로 건너뛰면 바로 가운데, 멈추면 남은 거리를 마저 따라가 멈춤, 지도를 끄는 동안은 따라가지 않음."""
+    import math
+    import time
+
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QMouseEvent
+    mv, S = win.map_view, win.session
+    mv.scale(4, 4)
+    k = next(i for i in range(len(S.pose_vt) - 8) if all(S.pose_vt[i + j + 1] - S.pose_vt[i + j] < 5 for j in range(6)))
+    vt = S.pose_vt[k]
+    win.set_vt(vt, "event")                                  # 이벤트 이동: 바로 가운데
+    app.processEvents()
+    assert _robot_offset(mv) < 3
+    centers = []
+    for _ in range(40):                                      # 10배속 재생 (16ms 간격)
+        vt += 0.16
+        win.set_vt(vt, "play")
+        app.processEvents()
+        time.sleep(0.016)
+        c = mv.mapToScene(mv.viewport().rect().center())
+        centers.append((c.x(), c.y()))
+    steps = [math.hypot(b[0] - a[0], b[1] - a[1]) * mv.transform().m11() for a, b in zip(centers, centers[1:])]
+    assert sum(s > 0.2 for s in steps) > len(steps) * 0.7 and max(steps) < 40      # 자주, 작게 움직임
+    assert _robot_offset(mv) < 150
+    win.set_vt(vt, "pause")                                  # 멈추면 타이머가 마저 따라감
+    assert _wait(app, lambda: _robot_offset(mv) < 2, 3)
+    press = QMouseEvent(QMouseEvent.MouseButtonPress, QPointF(5, 5), QPointF(5, 5), Qt.LeftButton, Qt.LeftButton,
+                        Qt.NoModifier)
+    mv.mousePressEvent(press)                                # 지도를 끄는 동안
+    before = mv.mapToScene(mv.viewport().rect().center())
+    win.set_vt(vt + 3.0, "play")
+    app.processEvents()
+    assert mv.mapToScene(mv.viewport().rect().center()) == before
+    release = QMouseEvent(QMouseEvent.MouseButtonRelease, QPointF(5, 5), QPointF(5, 5), Qt.LeftButton, Qt.NoButton,
+                          Qt.NoModifier)
+    mv.mouseReleaseEvent(release)
+    win.set_vt(vt + 3.2, "play")
+    assert not mv._dragging and mv._cam_goal is not None or _robot_offset(mv) < 2
+
+
+def test_trail_appended_matches_rebuilt(app, win):
+    """궤적: 앞으로 재생할 때 새 포즈만 이어 붙인 결과 = 처음부터 다시 그린 결과."""
+    mv, S = win.map_view, win.session
+    win.layer_panel.cmb_history.setCurrentIndex(win.layer_panel.cmb_history.count() - 1)   # 전체
+    win.set_vt(S.pose_vt[2], "seek")
+    for vt in [S.pose_vt[2] + 0.5 * k for k in range(1, 120)]:
+        win.set_vt(vt, "play")
+    appended = mv.trail.path().elementCount()
+    mv._clear_trail()
+    mv.update_frame(win.vt, win.layer_panel.history_sec())
+    assert appended == mv.trail.path().elementCount() > 10

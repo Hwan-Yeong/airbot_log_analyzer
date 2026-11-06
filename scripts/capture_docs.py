@@ -208,6 +208,7 @@ def capture_gif(app, win, S, path: Path, args):
     end = min(docks[-1] + 4.0, S.vt_end) if docks and docks[-1] > start else S.vt_end
     lp = win.layer_panel
     lp.cmb_history.setCurrentIndex(lp.cmb_history.count() - 1)        # 전체
+    lp.chk_follow.setChecked(False)                                   # 프레임마다 크게 건너뛰므로 화면 고정
     if "step" in lp.layer_checks:
         lp.layer_checks["step"].setChecked(True)
     win.tabs.setCurrentIndex(0)

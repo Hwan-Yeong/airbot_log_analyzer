@@ -5,8 +5,9 @@
 """
 import bisect
 import math
+import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem, QGraphicsPixmapItem,
                                QGraphicsPolygonItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView)
@@ -17,6 +18,9 @@ from . import style
 NO_MAP_RES = 0.05            # 맵이 없을 때 1px = 5cm
 TRAIL_BREAK_SEC = 60.0       # 이보다 긴 공백/점프는 궤적 선을 끊음
 TRAIL_BREAK_DIST = 2.0
+FOLLOW_TAU = 0.12            # 로봇 따라가기: 카메라가 로봇을 쫓는 시간 상수 (초, 작을수록 바짝 따라감)
+FOLLOW_SNAP = 0.6            # 화면 크기의 이 비율보다 멀면 (이벤트 이동·순간이동) 부드럽게 가지 않고 바로 맞춤
+CAMERA_MS = 16               # 재생을 멈춘 뒤 남은 거리를 마저 따라갈 때의 간격 (약 60fps)
 GOAL_END_RULES = ("goal_reached", "goal_failed")
 TRAIL_MAX_POSES = 500
 
@@ -130,6 +134,16 @@ class MapView(QGraphicsView):
         self._goal_end_vts = []
         self._layer_color = {}
         self._last = None             # 마지막 update_frame 인자 (설정 변경 시 다시 그리기)
+        # 로봇 따라가기 카메라: 재생 틱마다 목표(로봇)로 조금씩 다가감 (지수 감쇠), 멈추면 타이머가 마저 따라감
+        self._cam_pos = None          # 카메라 중심 (scene, 실수 — 스크롤 정수 반올림과 무관하게 부드럽게)
+        self._cam_goal = None
+        self._cam_t = 0.0
+        self._cam_tick_t = 0.0
+        self._dragging = False
+        self._cam_timer = QTimer(self)
+        self._cam_timer.setTimerType(Qt.PreciseTimer)
+        self._cam_timer.setInterval(CAMERA_MS)
+        self._cam_timer.timeout.connect(self._camera_step)
         self._reset_items()
 
     # ------------------------------------------------------------ 좌표
@@ -158,6 +172,12 @@ class MapView(QGraphicsView):
         self.trail = QGraphicsPathItem()
         self.trail.setZValue(10)
         sc.addItem(self.trail)
+        self.trail_head = QGraphicsLineItem()      # 마지막 포즈 → 현재 위치 (매 프레임 이 토막만 갱신)
+        self.trail_head.setZValue(10)
+        self.trail_head.setVisible(False)
+        sc.addItem(self.trail_head)
+        self._trail_key = None                     # 지금 그려 둔 궤적 범위 (바뀔 때만 다시 만듦)
+        self._trail_last = None
         self.target_line = QGraphicsLineItem()
         self.target_line.setZValue(11)
         self.target_line.setVisible(False)
@@ -173,6 +193,7 @@ class MapView(QGraphicsView):
         t = style.T()
         self.setBackgroundBrush(QColor(t.map_bg))
         self.trail.setPen(_cosmetic(t.qcolor("trail"), self.trail_width))
+        self.trail_head.setPen(_cosmetic(t.qcolor("trail"), self.trail_width))
         self.target_line.setPen(_cosmetic(t.target_line, 1.5, Qt.DashLine))
         self.robot.setPath(robot_path(self.robot_size))
         self.robot.setBrush(QColor(t.robot))
@@ -372,8 +393,9 @@ class MapView(QGraphicsView):
         for i in range(max(c, b), d):
             items[i].setVisible(True)
 
-    def update_frame(self, vt: float, history_sec: float):
-        """vt 시점 표시. history_sec: 실제 경과 시간 기준 누적 표시 범위 (0 = 전체)."""
+    def update_frame(self, vt: float, history_sec: float, smooth: bool = False):
+        """vt 시점 표시. history_sec: 실제 경과 시간 기준 누적 표시 범위 (0 = 전체).
+        smooth: 재생 중 — 로봇 따라가기를 부드럽게 (아니면 이벤트 이동처럼 바로 맞춤)."""
         S = self.session
         if S is None:
             return
@@ -399,34 +421,51 @@ class MapView(QGraphicsView):
             self.robot.setVisible(False)
 
         if self.show_trail and self.trail_mode == "poses":
-            self.trail.setPath(QPainterPath())
+            self._clear_trail()
             self._update_pose_trail(S, vt)
         else:
             self._hide_pose_pool(0)
             self._update_trail(S, lo, vt, pose)
         self._update_target(S, vt, pose)
         if self.follow and pose is not None:
-            self._keep_visible(self.robot.pos())
+            self.follow_robot(smooth)
+
+    def _clear_trail(self):
+        if self._trail_key is not None or not self.trail.path().isEmpty():
+            self.trail.setPath(QPainterPath())
+        self.trail_head.setVisible(False)
+        self._trail_key = self._trail_last = None
 
     def _update_trail(self, S, lo, vt, pose):
+        """지난 포즈까지의 선은 범위가 바뀔 때만 다시 만들고, 매 프레임은 마지막 포즈 → 현재 위치 한 토막만."""
         if not self.show_trail or not S.pose_vt:
-            self.trail.setPath(QPainterPath())
+            self._clear_trail()
             return
         i0 = bisect.bisect_left(S.pose_rt, lo)
         i1 = bisect.bisect_right(S.pose_vt, vt)
-        path = QPainterPath()
-        prev = None
-        for i in range(i0, i1):
-            x, y, t = S.pose_x[i], S.pose_y[i], S.pose_rt[i]
-            pt = QPointF(*self.world_to_scene(x, y))
-            if prev is None or t - prev[2] > TRAIL_BREAK_SEC or math.hypot(x - prev[0], y - prev[1]) > TRAIL_BREAK_DIST:
-                path.moveTo(pt)
+        if (i0, i1) != self._trail_key:
+            old = self._trail_key
+            if old is not None and old[0] == i0 and i1 > old[1]:     # 앞으로 재생: 새 포즈만 이어 붙임
+                path, prev, start = self.trail.path(), self._trail_last, old[1]
             else:
-                path.lineTo(pt)
-            prev = (x, y, t)
+                path, prev, start = QPainterPath(), None, i0
+            for i in range(start, i1):
+                x, y, t = S.pose_x[i], S.pose_y[i], S.pose_rt[i]
+                pt = QPointF(*self.world_to_scene(x, y))
+                if prev is None or t - prev[2] > TRAIL_BREAK_SEC or math.hypot(x - prev[0], y - prev[1]) > TRAIL_BREAK_DIST:
+                    path.moveTo(pt)
+                else:
+                    path.lineTo(pt)
+                prev = (x, y, t)
+            self.trail.setPath(path)
+            self._trail_key, self._trail_last = (i0, i1), prev
+        prev = self._trail_last
         if pose is not None and prev is not None and math.hypot(pose[0] - prev[0], pose[1] - prev[1]) <= TRAIL_BREAK_DIST:
-            path.lineTo(QPointF(*self.world_to_scene(pose[0], pose[1])))
-        self.trail.setPath(path)
+            (ax, ay), (bx, by) = self.world_to_scene(prev[0], prev[1]), self.world_to_scene(pose[0], pose[1])
+            self.trail_head.setLine(ax, ay, bx, by)
+            self.trail_head.setVisible(True)
+        else:
+            self.trail_head.setVisible(False)
 
     def _pose_item(self, j):
         while len(self._pose_pool) <= j:
@@ -480,27 +519,81 @@ class MapView(QGraphicsView):
             self.target_line.setLine(rp.x(), rp.y(), cur.pos().x(), cur.pos().y())
         self.target_line.setVisible(active)
 
-    def _keep_visible(self, scene_pt):
+    # ------------------------------------------------------------ 로봇 따라가기 (카메라)
+    def follow_robot(self, smooth: bool):
+        """카메라 중심을 로봇으로. smooth: 재생 틱마다 조금씩 다가감, 아니면(이동·처음) 바로 맞춤."""
+        if self._dragging or not self.robot.isVisible():
+            return
+        goal = QPointF(self.robot.pos())
         vp = self.viewport().rect()
-        p = self.mapFromScene(scene_pt)
-        mx, my = vp.width() * 0.15, vp.height() * 0.15
-        if not (mx <= p.x() <= vp.width() - mx and my <= p.y() <= vp.height() - my):
-            self.centerOn(scene_pt)
+        if self._cam_pos is None:
+            self._cam_pos = QPointF(self.mapToScene(vp.center()))
+        gap = self.mapFromScene(goal) - vp.center()
+        far = math.hypot(gap.x(), gap.y()) > FOLLOW_SNAP * max(vp.width(), vp.height(), 1)
+        if not smooth or far:
+            self._cam_timer.stop()
+            self._cam_goal = None
+            self._cam_pos = goal
+            self.centerOn(goal)
+            return
+        self._cam_goal = goal
+        self._camera_step(from_tick=True)
+        if self._cam_goal is not None and not self._cam_timer.isActive():
+            self._cam_timer.start()               # 재생이 멈추면 남은 거리를 마저 따라감
+
+    def _camera_step(self, from_tick: bool = False):
+        now = time.monotonic()
+        if self._cam_goal is None or self._cam_pos is None:
+            self._cam_timer.stop()
+            return
+        if from_tick:
+            self._cam_tick_t = now
+        elif now - self._cam_tick_t < 0.03:       # 재생 틱이 움직이는 중 (화면을 두 번 그리지 않음)
+            return
+        dt = min(max(now - self._cam_t, 0.0), 0.1) if self._cam_t else CAMERA_MS / 1000.0
+        self._cam_t = now
+        a = 1.0 - math.exp(-dt / FOLLOW_TAU)
+        d = self._cam_goal - self._cam_pos
+        self._cam_pos = self._cam_pos + d * a
+        if math.hypot(d.x(), d.y()) * (1.0 - a) * self.transform().m11() < 0.3:     # 화면에서 0.3px 이내면 끝
+            self._cam_pos = QPointF(self._cam_goal)
+            self._cam_goal = None
+            self._cam_timer.stop()
+        self.centerOn(self._cam_pos)
+
+    def _camera_moved_by_user(self):
+        """확대/축소·창 크기·직접 이동 뒤에는 화면의 현재 중심에서 다시 따라감."""
+        self._cam_pos = None
+        self._cam_goal = None
+        self._cam_timer.stop()
 
     # ------------------------------------------------------------ 조작
     def fit(self):
         r = self.scene().sceneRect()
         if not r.isNull():
             self.fitInView(r, Qt.KeepAspectRatio)
+        self._camera_moved_by_user()
 
     def center_on_world(self, x, y):
         self.centerOn(QPointF(*self.world_to_scene(x, y)))
+        self._camera_moved_by_user()
 
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
         cur = self.transform().m11()
         if 0.02 < cur * factor < 60:
             self.scale(factor, factor)
+            self._camera_moved_by_user()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._camera_moved_by_user()
+
+    def mouseReleaseEvent(self, event):
+        if self._dragging and event.button() == Qt.LeftButton:
+            self._dragging = False                # 손을 떼면 그 자리에서 다시 로봇을 따라감
+            self._camera_moved_by_user()
+        super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
         sp = self.mapToScene(event.position().toPoint())
@@ -516,6 +609,8 @@ class MapView(QGraphicsView):
                     self.markerClicked.emit(ev)
                     event.accept()
                     return
+            self._dragging = True                 # 지도를 끄는 동안은 따라가기 잠시 멈춤
+            self._cam_timer.stop()
         super().mousePressEvent(event)
 
     def drawForeground(self, painter, rect):
