@@ -80,9 +80,11 @@ class ClaudeRunner:
             except OSError:
                 pass
 
-    def _cmd(self, prompt_file: Path, with_schema: bool):
-        cmd = [self.exe, "-p", "--output-format", "json", "--tools", "", "--safe-mode", "--no-session-persistence",
-               "--system-prompt-file", str(prompt_file)]
+    def _cmd(self, prompt_file: Path, with_schema: bool, minimal: bool = False):
+        cmd = [self.exe, "-p", "--output-format", "json", "--tools", ""]
+        if not minimal:                    # 오래된 CLI 에 없는 옵션은 오류 시 빼고 다시 시도
+            cmd += ["--safe-mode", "--no-session-persistence"]
+        cmd += ["--system-prompt-file", str(prompt_file)]
         if with_schema:
             cmd += ["--json-schema", json.dumps(self.schema, ensure_ascii=False, separators=(",", ":"))]
         if self.model:
@@ -94,11 +96,16 @@ class ClaudeRunner:
         try:
             return self._run(user_message, progress, with_schema=True)
         except ClaudeError as e:
-            if "json-schema" in str(e) and not self._cancel.is_set():
+            msg = str(e).lower()
+            if self._cancel.is_set():
+                raise
+            if "unknown option" in msg and ("safe-mode" in msg or "session-persistence" in msg):
+                return self._run(user_message, progress, with_schema="json-schema" not in msg, minimal=True)
+            if "json-schema" in msg:
                 return self._run(user_message, progress, with_schema=False)
             raise
 
-    def _run(self, user_message: str, progress, with_schema: bool):
+    def _run(self, user_message: str, progress, with_schema: bool, minimal: bool = False):
         if not self.exe:
             raise ClaudeError("Claude Code CLI(claude)를 찾지 못했습니다. 설치·로그인 후 다시 시도하세요 (docs/SETUP.md).")
         with tempfile.TemporaryDirectory(prefix="airbotlog_ai_") as tmp:
@@ -111,7 +118,7 @@ class ClaudeRunner:
             env = dict(os.environ)
             env.pop("CLAUDECODE", None)    # 다른 Claude Code 세션 안에서 실행돼도 독립 실행
             try:
-                self._proc = subprocess.Popen(self._cmd(prompt_file, with_schema), cwd=str(work), env=env,
+                self._proc = subprocess.Popen(self._cmd(prompt_file, with_schema, minimal), cwd=str(work), env=env,
                                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                               creationflags=flags)
             except OSError as e:
@@ -155,7 +162,7 @@ class ClaudeRunner:
             result = parse_json_text(d.get("result") or "")
         meta = {"duration_s": round((d.get("duration_ms") or 0) / 1000, 1), "cost_usd": d.get("total_cost_usd"),
                 "models": sorted((d.get("modelUsage") or {}).keys()), "num_turns": d.get("num_turns"),
-                "schema": with_schema}
+                "schema": with_schema, "minimal_flags": minimal}
         return result, meta
 
 

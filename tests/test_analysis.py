@@ -158,6 +158,8 @@ FAKE_CLI = textwrap.dedent('''\
         print(json.dumps({{"type": "result", "is_error": True, "result": "Not logged in"}})); sys.exit(1)
     if os.environ.get("FAKE_CLAUDE_MODE") == "slow":
         time.sleep(30)
+    if os.environ.get("FAKE_CLAUDE_MODE") == "old" and "--safe-mode" in args:
+        print("error: unknown option '--safe-mode'", file=sys.stderr); sys.exit(1)
     rid = re.findall(r"R\\d{{5}}", msg)[0]
     ev = re.findall(r"EV\\d{{3}}", msg)[0]
     out = {result}
@@ -196,6 +198,9 @@ def test_claude_runner_with_fake_cli(session, fake_cli, tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "error")
     with pytest.raises(ai.ClaudeError, match="Not logged in"):
         ai.ClaudeRunner(str(fake_cli), "S", ai.load_schema()).run("R00001 EV001")
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "old")                 # 옵션을 모르는 오래된 CLI → 빼고 다시
+    res_old, meta_old = ai.ClaudeRunner(str(fake_cli), "S", ai.load_schema()).run("R00001 EV001")
+    assert meta_old["minimal_flags"] and res_old["summary"]
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "slow")
     with pytest.raises(ai.ClaudeError, match="시간 초과"):
         ai.ClaudeRunner(str(fake_cli), "S", ai.load_schema(), timeout=1).run("R00001 EV001")
