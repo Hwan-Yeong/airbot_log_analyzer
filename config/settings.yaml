@@ -19,3 +19,10 @@ workspace:
   temp_root: ''        # 압축 해제 임시 폴더 위치 (비우면 OS 임시 폴더). 종료 시 자동 삭제
   skip_members:        # 압축 해제 시 건너뛸 경로 (SoC 로그는 현재 사용하지 않음)
     - 'soc/*'
+
+analysis:              # [분석] AI 현상 분석 (Claude Code CLI 필요, docs/SETUP.md)
+  before_min: 10       # 기준 시각 앞/뒤 분석 구간 (분)
+  after_min: 5
+  excel_name: 'Airbot_{serial6}_{issue}_현상분석_{date}_AI.xlsx'
+  title: 'Airbot'
+  guideline_file: ''   # 원본 지침 파일 경로 (선택). 보낼 때마다 [원본 지침 파일도 함께 보내기]로 선택

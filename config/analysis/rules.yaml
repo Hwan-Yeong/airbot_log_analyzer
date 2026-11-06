@@ -1,0 +1,246 @@
+# 분석용 이벤트 규칙 (airbot_log 외 소스)
+#   - airbot_log 이벤트는 config/rules.yaml 결과를 그대로 사용한다.
+#   - 규칙을 추가하면 코드 수정 없이 [분석]의 이벤트 목록·발췌에 반영된다.
+#
+# source   : soc | ota | journal | dmesg
+# contains : 빠른 거르기용 문자열 (원문에 있어야 정규식 검사)
+# regex    : 원문 한 줄에 대한 정규식. 이름 그룹은 text 에 {이름} 으로 쓴다. code 그룹은 에러 코드로 사용
+# type     : error_occur | error_clear | boot | link | net | timeout | conn | ota | restart | crash | collect | info
+# level    : info | warn | error
+
+soc:
+  # 분석 구간 안에서 발췌에 넣을 SoC 태그 (그 밖의 태그는 규칙에 걸리거나 F 레벨일 때만)
+  tags: [AMRAgent, DeviceAgent, IotAgent, EthernetAgent, EthernetNetworkFactory, UiLauncher, bootstat, SystemServer]
+  # 잡음 (발췌에서 제외)
+  noise: 'ActivityThread: Failed to find provider|BluetoothPbapUtils|audio_hw_primary|libc *: Access denied|CompatibilityInfo|Camera2CaptureRequestBuilder|CaptureSession|OnBackInvokedCallback'
+
+rules:
+  # ---------------------------------------------------------------- SoC (logcat)
+  - id: soc_error_occur
+    source: soc
+    contains: handleError
+    regex: 'handleError From AMR: code = (?P<code>[A-Z]\d{2}(?:-\d)?), priority: \d+, status : 1'
+    text: 'SoC 에러 발생 처리 {code}'
+    type: error_occur
+    level: error
+  - id: soc_error_clear
+    source: soc
+    contains: handleError
+    regex: 'handleError From AMR: code = (?P<code>[A-Z]\d{2}(?:-\d)?), priority: \d+, status : 2'
+    text: 'SoC 에러 해제 처리 {code}'
+    type: error_clear
+    level: info
+  - id: soc_elm
+    source: soc
+    contains: '[ELM]'
+    regex: '\[ELM\] log:\S+, (?P<code>[A-Z]\d{2}(?:-\d)?), (?P<st>occured|resolved)'
+    text: 'SoC 에러 기록 {code} {st}'
+    type: info
+    level: info
+  - id: soc_socket_timeout
+    source: soc
+    contains: SocketTimeoutException
+    regex: 'AMRAgent: .*SocketTimeoutException'
+    text: 'SoC → AMR 요청 응답 없음 (SocketTimeout)'
+    type: timeout
+    level: warn
+  - id: soc_amr_connected
+    source: soc
+    contains: setAMRConnected
+    regex: 'setAMRConnected\(\) Set New Value: (?P<v>true|false)'
+    text: 'SoC 의 AMR 연결 상태 = {v}'
+    type: conn
+    level: info
+  - id: soc_link
+    source: soc
+    contains: link-
+    regex: 'Ethernet\[eth0\] is link-(?P<st>down|up)'
+    text: 'SoC 이더넷 link-{st}'
+    type: link
+    level: warn
+  - id: soc_eth_disconnect
+    source: soc
+    contains: Ethernet is disconnect
+    regex: 'Ethernet is disconnect'
+    text: 'SoC 이더넷 연결 끊김'
+    type: link
+    level: warn
+  - id: soc_ping_fail
+    source: soc
+    contains: Request timed out
+    regex: 'Ping to [\d.]+: Request timed out'
+    text: 'SoC → AMR ping 실패'
+    type: net
+    level: warn
+  - id: soc_gateway_fail
+    source: soc
+    contains: Failed to
+    regex: 'Gateway Failed to set gateway|Failed to clear IP address'
+    text: 'SoC 네트워크 설정 실패'
+    type: net
+    level: warn
+  - id: soc_boot
+    source: soc
+    contains: bootstat
+    regex: 'bootstat: Canonical boot reason: (?P<r>\S+)'
+    text: 'SoC 부팅 (boot reason: {r})'
+    type: boot
+    level: warn
+  - id: soc_system_server
+    source: soc
+    contains: Entered the Android system server
+    regex: 'Entered the Android system server'
+    text: 'SoC Android 시작'
+    type: boot
+    level: info
+  - id: soc_shutdown
+    source: soc
+    contains: Shutting down
+    regex: 'ShutdownThread.*Shutting down|Shutting down VM'
+    text: 'SoC 종료 절차'
+    type: restart
+    level: info
+  - id: soc_anr
+    source: soc
+    contains: 'ANR in'
+    regex: 'ANR in (?P<p>\S+)'
+    text: 'SoC ANR: {p}'
+    type: crash
+    level: warn
+  - id: soc_fatal
+    source: soc
+    contains: FATAL EXCEPTION
+    regex: 'FATAL EXCEPTION'
+    text: 'SoC 앱 비정상 종료'
+    type: crash
+    level: error
+  - id: soc_log_collect
+    source: soc
+    contains: saveDataToFile
+    regex: 'saveDataToFile path : (?P<zip>\S+)'
+    text: 'SoC 로그 채취'
+    type: collect
+    level: info
+
+  # ---------------------------------------------------------------- AMR otalog
+  - id: ota_net_down
+    source: ota
+    contains: '[NET] eth0 DOWN'
+    regex: '\[NET\] eth0 DOWN'
+    text: 'AMR 네트워크 감시: eth0 DOWN'
+    type: link
+    level: warn
+  - id: ota_net_up
+    source: ota
+    contains: '[NET] eth0 UP'
+    regex: '\[NET\] eth0 UP.*\[L4:listen=(?P<lis>\w+) estab=(?P<est>\d+)'
+    text: 'AMR 네트워크 감시: eth0 UP (listen={lis}, estab={est})'
+    type: link
+    level: info
+  - id: ota_carrier
+    source: ota
+    contains: '[CARRIER][CHANGE]'
+    regex: '\[NET_RECOVERY\]\[CARRIER\]\[CHANGE\].*carrier=(?P<c>\d)'
+    text: 'AMR eth0 carrier={c}'
+    type: link
+    level: warn
+  - id: ota_syslog_saved
+    source: ota
+    contains: '[SYSTEM_LOG][SAVE_SUCCESS]'
+    regex: '\[NET_RECOVERY\]\[SYSTEM_LOG\]\[SAVE_SUCCESS\]'
+    text: 'AMR journal/dmesg 스냅샷 저장'
+    type: info
+    level: info
+  - id: ota_arp_fail
+    source: ota
+    contains: All neighbors FAILED
+    regex: 'All neighbors FAILED'
+    text: 'AMR ARP 이웃 응답 없음'
+    type: net
+    level: warn
+  - id: ota_no_client
+    source: ota
+    contains: NO_CLIENT
+    regex: '\[WARN:NO_CLIENT\]'
+    text: 'AMR 서버에 SoC 접속 없음'
+    type: net
+    level: warn
+  - id: ota_start
+    source: ota
+    contains: reqSetOTAdata
+    regex: 'reqSetOTAdata'
+    text: 'OTA 시작 요청'
+    type: ota
+    level: info
+  - id: ota_done
+    source: ota
+    contains: success
+    regex: 'OTA process completed successfully|installation successful'
+    text: 'OTA 완료'
+    type: ota
+    level: info
+  - id: ota_fail
+    source: ota
+    contains: ail
+    regex: 'MCU OTA failed|MCU OTA Boot Mode Fail|File copy failed'
+    text: 'OTA 실패'
+    type: ota
+    level: error
+  - id: ota_sigterm
+    source: ota
+    contains: SIGTERM
+    regex: 'Received signal: SIGTERM'
+    text: 'OTA 서비스 SIGTERM 수신 (정상 종료 절차)'
+    type: restart
+    level: info
+  - id: ota_service_start
+    source: ota
+    contains: Start OTA Process
+    regex: 'Start OTA Process'
+    text: 'OTA 서비스 시작 (AMR 부팅/재시작)'
+    type: boot
+    level: info
+
+  # ---------------------------------------------------------------- AMR journal / dmesg
+  - id: journal_link
+    source: journal
+    contains: 'eth0: Link is'
+    regex: 'eth0: Link is (?P<st>Down|Up)'
+    text: 'AMR 커널: eth0 Link {st}'
+    type: link
+    level: warn
+  - id: journal_carrier
+    source: journal
+    contains: carrier
+    regex: 'eth0: (?P<c>Lost carrier|Gained carrier)'
+    text: 'AMR eth0 {c}'
+    type: link
+    level: warn
+  - id: journal_boot
+    source: journal
+    contains: Booting Linux
+    regex: 'Booting Linux'
+    text: 'AMR 리눅스 부팅'
+    type: boot
+    level: warn
+  - id: journal_oom
+    source: journal
+    contains: emory
+    regex: 'Out of memory|oom-kill|Killed process'
+    text: 'AMR 메모리 부족(OOM)'
+    type: crash
+    level: error
+  - id: dmesg_link
+    source: dmesg
+    contains: 'eth0: Link is'
+    regex: 'eth0: Link is (?P<st>Down|Up)'
+    text: 'AMR 커널: eth0 Link {st}'
+    type: link
+    level: warn
+  - id: dmesg_oom
+    source: dmesg
+    contains: emory
+    regex: 'Out of memory|oom-kill|Killed process'
+    text: 'AMR 메모리 부족(OOM)'
+    type: crash
+    level: error

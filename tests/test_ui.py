@@ -121,3 +121,44 @@ def test_view_prefs_saved_on_close(app, demo_zip, settings):
     w.layer_panel.spn_robot.setValue(37)
     w.close()
     assert Settings(user_path=settings.user_path).get("display.view")["robot_size"] == 37
+
+
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="가짜 CLI 는 shebang 스크립트")
+def test_analysis_dialog_flow(app, win, tmp_path, monkeypatch):
+    """[분석]: 요청 입력 → 미리보기(마스킹) → (가짜) Claude → 결과 → 행 더블클릭 이동 → 엑셀."""
+    import sys
+
+    from test_analysis import FAKE_CLI, _valid_result
+
+    from airbotlog.ui import analysis_dialog as ad
+    cli = tmp_path / "claude"
+    cli.write_text(FAKE_CLI.format(python=sys.executable, result=repr(_valid_result())), encoding="utf-8")
+    cli.chmod(0o755)
+    win.settings.set_user("analysis.claude_path", str(cli))
+    shown = {}
+
+    def fake_exec(dlg):
+        shown["message"] = dlg.message()
+        return ad.QDialog.Accepted
+
+    monkeypatch.setattr(ad.PreviewDialog, "exec", fake_exec)
+    win.open_analysis()
+    dlg = win._analysis
+    dlg.ed_request.setPlainText("11월 1일 오전 9시 반쯤 주방 가다가 낙하 에러(S07-2) 나고 멈췄대요. 시리얼 DEMOBOTSN000000001")
+    dlg.update_extract()
+    assert dlg.cmb_hint.count() == 1 and dlg.dt_anchor.dateTime().toString("HH:mm") == "09:30"
+    dlg.preview()
+    assert _wait(app, lambda: dlg.result_dialogs, 30)
+    assert "DEMOBOTSN000000001" not in shown["message"] and "SN_01" in shown["message"]
+    res = dlg.result_dialogs[0]
+    assert res.tbl.rowCount() == 1
+    win.set_vt(0.0, "seek")
+    res.jump_row(0)
+    assert win.vt > 0.0
+    out = tmp_path / "x.xlsx"
+    monkeypatch.setattr(ad.QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), ""))
+    monkeypatch.setattr(ad.QMessageBox, "information", lambda *a, **k: None)
+    res.save_excel()
+    assert out.exists() and out.stat().st_size > 5000
+    res.close()
+    dlg.close()

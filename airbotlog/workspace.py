@@ -365,8 +365,10 @@ def prepare_source(inputs, ws: Workspace, skip=(), progress=_noop, origin: str =
     map_dir = find_map_dir(roots + [log_dir], prefer=log_dir)
     named = archives[0] if archives else (dirs[0] if dirs else log_dir)
     meta = parse_archive_name(named.name)
+    # 분석([분석] 버튼)에서 다른 로그(otalog·journal·SoC logcat)를 찾을 때 사용. 원본은 읽기만 함
+    extras = {"roots": [str(r) for r in roots + dirs], "archives": [str(a) for a in archives]}
     return LogSource(label=named.name, origin=origin or str(named), log_files=log_files,
-                     map_dir=map_dir, **meta)
+                     map_dir=map_dir, extras=extras, **meta)
 
 
 def prepare_map(path, ws: Workspace, skip=(), progress=_noop) -> Path:

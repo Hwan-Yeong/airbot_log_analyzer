@@ -28,6 +28,20 @@ DEFAULTS = {
     "display": {
         "history_minutes": 10,
     },
+    "analysis": {
+        "claude_path": "",          # 비우면 PATH 의 claude
+        "model": "",                # 비우면 Claude Code 기본 모델
+        "timeout_sec": 900,
+        "before_min": 10,           # 기준 시각 앞/뒤 분석 구간 (분)
+        "after_min": 5,
+        "max_lines": 1500,          # 보낼 발췌 최대 줄 수 / 글자 수
+        "max_chars": 150000,
+        "guideline_file": "",       # 원본 지침 파일 (선택, 보낼 때마다 확인)
+        "mask_words": [],           # 추가 마스킹 단어 (현장명 등)
+        "mask_patterns": [],        # 추가 마스킹 정규식
+        "excel_name": "Airbot_{serial6}_{issue}_현상분석_{date}_AI.xlsx",
+        "title": "Airbot",
+    },
     "workspace": {
         "temp_root": "",
         # 압축 해제 시 건너뛸 경로(fnmatch 패턴). SoC 로그는 v1에서 사용하지 않음.

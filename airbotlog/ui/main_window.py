@@ -215,6 +215,9 @@ class MainWindow(QMainWindow):
         act(QStyle.SP_DialogSaveButton, "화면 저장", self.export_png, "Ctrl+S", "현재 맵 화면을 PNG 로 저장")
         act(QStyle.SP_FileIcon, "이벤트 CSV", self.export_csv, None, "현재 필터의 이벤트 목록을 CSV 로 저장")
         tb.addSeparator()
+        self.act_analysis = act(QStyle.SP_FileDialogInfoView, "분석", self.open_analysis, None,
+                                "AI 현상 분석: 요청(구어체/메일) + 로그 타임라인 → Claude → 현상 분석표(엑셀)")
+        tb.addSeparator()
         act(QStyle.SP_ComputerIcon, "NAS 경로", self.edit_nas_path, None, "NAS 경로 설정")
         act(QStyle.SP_MessageBoxInformation, "정보", self.show_about)
         spacer = QWidget()
@@ -269,10 +272,8 @@ class MainWindow(QMainWindow):
         def job(progress):
             ws.clear()
             local = source.copy_to(entry.rel, ws.new_dir("nas"), size=entry.size, progress=progress)
-            session = load_session([local], ws, settings, rules, progress, origin="NAS: " + entry.rel)
-            if local.suffix.lower() in (".zip", ".tar", ".gz", ".tgz"):
-                local.unlink()  # 압축 해제 후 복사본 삭제 (임시 폴더 용량 절약)
-            return session
+            # 복사본은 [분석]에서 SoC 로그를 읽을 때 쓰므로 남겨 둠 (다른 로그를 열거나 종료하면 임시 폴더와 함께 삭제)
+            return load_session([local], ws, settings, rules, progress, origin="NAS: " + entry.rel)
 
         self._inputs, self._origin = [], "NAS: " + entry.rel
         self._run_load(job, f"NAS: {entry.name}")
@@ -604,6 +605,16 @@ class MainWindow(QMainWindow):
                             "" if e.x is None else f"{e.x:.3f}", "" if e.y is None else f"{e.y:.3f}",
                             S.files[e.fi].name, e.ln + 1])
         self.statusBar().showMessage(f"저장: {path}", 4000)
+
+    def open_analysis(self):
+        if self.session is None:
+            QMessageBox.information(self, "분석", "먼저 로그를 불러오세요.")
+            return
+        from .analysis_dialog import AnalysisDialog
+        self.pause()
+        self._analysis = AnalysisDialog(self)
+        self._analysis.show()
+        self._analysis.raise_()
 
     def edit_nas_path(self):
         NasPathDialog(self.settings, self).exec()

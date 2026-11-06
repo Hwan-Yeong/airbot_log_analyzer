@@ -1,0 +1,662 @@
+{
+ "note": "데모(합성) 로그 + 데모 요청 메일로 실제 Claude 분석을 한 번 실행한 결과 (문서 캡처·참고용)",
+ "request_file": "demo_request.eml",
+ "anchor": "2026-11-01 09:30:00",
+ "before_min": 10,
+ "after_min": 50,
+ "meta": {
+  "models": [
+   "claude-opus-5-5"
+  ],
+  "elapsed_s": 71.2,
+  "retried": false,
+  "errors": [],
+  "warnings": [
+   "요약/현상에 인과 표현(원인은·때문에·로 인해)이 있습니다 — 로그 근거를 확인하세요."
+  ]
+ },
+ "result": {
+  "schema_version": "1.0",
+  "summary": "09:31:49 목표(-7,-4)로 주행 중 S07-2가 발생한 직후 S05로 정지했고, 10:07~10:09 eth0 단절 중 E09가 발생·해제됨",
+  "request_check": {
+   "claimed_symptom": "주방으로 이동하다가 낙하 에러(S07-2)가 뜨고 목표 도달 실패(S05)로 멈춤. 추가로 10시쯤 앱에 통신 불량(E09)이 잠깐 표시됨",
+   "claimed_time": "2026-11-01 09:30경 (E09: 10:00경)",
+   "log_time": "S07-2 2026-11-01 09:31:49.140 발생 ~ 09:31:54.940 해제, S05 09:32:01.840 발생 ~ 09:42:07.940 해제, E09(SoC) 10:07:57.500 발생 ~ 10:09:51.500 해제",
+   "match": "일치",
+   "note": "S07-2와 S05는 접수 시각(09:30경)에서 약 2분 뒤(계산)에 순서대로 기록되어 있어 접수 내용과 일치합니다. E09는 접수상 '10시쯤'이지만 로그에서는 10:07:57이며, 약 2분간(계산) 표시되었다가 해제되어 '잠깐 표시'와 대체로 맞습니다. 목표 좌표 (-7.0, -4.0)이 '주방'인지는 로그로 확인할 수 없습니다. 세 코드 모두 로그 전체에서 1회씩만 발생했습니다.",
+   "evidence": [
+    "R00026",
+    "R00043",
+    "R00048",
+    "R00055",
+    "R00061",
+    "R00103",
+    "R00118",
+    "EV067",
+    "EV069",
+    "EV071"
+   ]
+  },
+  "phenomenon_detail": [
+   {
+    "no": 1,
+    "text": "① 09:20:21에 SoC가 Move to Target (5.0, 5.0)을 보냈고, 로봇은 UNDOCKING→NAVIGATION으로 전환한 뒤 09:20:44.910에 목표에 도착했습니다(정상). 이 주행 중 1D ToF 장애물(0.210m)과 낮은 장애물 감지가 각 1회 기록되었습니다.",
+    "evidence": [
+     "R00002",
+     "R00003",
+     "R00009",
+     "R00015",
+     "R00016",
+     "R00020"
+    ]
+   },
+   {
+    "no": 2,
+    "text": "② 09:31:04.920에 Move to Target (-7.0, -4.0, 180.0)을 받아 주행을 시작했고, 09:31:48.230 위치는 (-6.400, -3.400, -137.6deg)였습니다. 이 구간 Costmap check는 cost(0), static(0)으로 기록되었습니다.",
+    "evidence": [
+     "R00025",
+     "R00026",
+     "R00029",
+     "R00036",
+     "R00039"
+    ]
+   },
+   {
+    "no": 3,
+    "text": "③ 09:31:48.430에 [DROP IR] ff가 감지되었습니다(Cliff IR ff[1] : true, (-6.400, -3.400)). 이어 09:31:48.740에 FREEZE→BACKUP 동작에 들어갔고, 09:31:49.140에 S07-2가 발생했으며 09:31:49.240에 cmd_vel이 0으로 강제되었습니다. SoC도 09:31:49.440(환산)에 S07-2 status 1을 수신했습니다.",
+    "evidence": [
+     "R00040",
+     "R00041",
+     "R00042",
+     "R00043",
+     "R00044",
+     "R00045"
+    ]
+   },
+   {
+    "no": 4,
+    "text": "④ 09:31:53.240에 BACKUP이 끝났고(traveled=0.20m, reached=1), 09:31:54.740에 'IR clear + wall confirmed global+local'로 해제(released)되었습니다. 09:31:54.940에 S07-2 RELEASED가 기록되었고 SoC도 09:31:55.240에 해제(status 2)를 수신했습니다. S07-2의 발생부터 해제까지는 약 5.8초(계산)입니다.",
+    "evidence": [
+     "R00046",
+     "R00047",
+     "R00048",
+     "R00049"
+    ]
+   },
+   {
+    "no": 5,
+    "text": "⑤ S07-2가 해제된 직후인 09:31:56.940부터 planner_server 'Could not generate path between the given poses'가 3회 나왔습니다. 09:32:01.540에 Goal aborted(robot(-6.10, -3.10, 45.00deg), moving time 52.00)가 기록되었고, 09:32:01.840에 S05가 발생했습니다(SoC 09:32:02.140 수신). 경로 생성에 실패한 이유는 로그로 확인할 수 없습니다.",
+    "evidence": [
+     "R00050",
+     "R00051",
+     "R00052",
+     "R00053",
+     "R00054",
+     "R00055",
+     "R00056"
+    ]
+   },
+   {
+    "no": 6,
+    "text": "⑥ 09:32:02.840에 odom_monitor가 Unexpected odometry change(0.412, Tolerance 0.300)를 기록했습니다. 낙하 IR 회피 동작 직후와 같은 시점이지만, 두 사건의 관련성은 로그로 확인할 수 없습니다.",
+    "evidence": [
+     "R00057"
+    ]
+   },
+   {
+    "no": 7,
+    "text": "⑦ S05는 약 10분간 유지되었습니다(계산). 09:42:07.840에 ReturnToCharger 명령을 받은 직후인 09:42:07.940에 S05가 해제되었습니다. 로봇은 09:42:27.700에 복귀 목표에 도착했고 09:42:31.500에 ONSTATION으로 도킹을 마쳤습니다(정상).",
+    "evidence": [
+     "R00060",
+     "R00061",
+     "R00062",
+     "R00066",
+     "R00073",
+     "R00082",
+     "R00084"
+    ]
+   },
+   {
+    "no": 8,
+    "text": "⑧ 충전 중이던 10:07:30~31에 AMR 쪽 eth0 carrier=0 / Link is Down이 otalog·journal·dmesg에 모두 기록되었고, SoC도 같은 시각(환산)에 link-down과 disconnect를 기록했습니다. 이후 SocketTimeout과 ping 실패가 이어졌고, 10:07:57.500에 SoC에서 E09가 발생했습니다.",
+    "evidence": [
+     "R00093",
+     "R00094",
+     "R00096",
+     "R00097",
+     "R00098",
+     "R00099",
+     "R00101",
+     "R00102",
+     "R00103",
+     "R00105"
+    ]
+   },
+   {
+    "no": 9,
+    "text": "⑨ 10:09:28에 eth0 Link Up(100Mbps/Full)이 되었고, 10:09:44에 estab=1과 SoC 연결 상태 true가 기록된 뒤 10:09:51.500에 E09가 해제되었습니다. 이후 ping은 정상(0.42 ms)으로 돌아왔고 상태는 CHARGING으로 복귀했습니다. 링크 단절의 물리적 원인은 로그로 확인할 수 없습니다.",
+    "evidence": [
+     "R00109",
+     "R00112",
+     "R00113",
+     "R00114",
+     "R00116",
+     "R00117",
+     "R00118",
+     "R00120",
+     "R00123"
+    ]
+   },
+   {
+    "no": 10,
+    "text": "⑩ 분석 구간 동안 메모리 사용률은 약 24~25%, 배터리 온도는 33°C로 기록되었고 특이사항이 없습니다. 구간 안에서 재부팅은 없었습니다.",
+    "evidence": [
+     "R00023",
+     "R00089",
+     "R00121",
+     "R00122"
+    ]
+   }
+  ],
+  "timeline": [
+   {
+    "time": "2026-11-01 09:20:21.000",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.2.txt:L22",
+    "event": "Move to Target (5.0, 5.0, 90.0) 수신",
+    "interpretation": "첫 번째 주행 명령",
+    "importance": "참고",
+    "evidence": [
+     "R00002"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:20:23.100",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.2.txt:L29",
+    "event": "UNDOCKING → NAVIGATION",
+    "interpretation": "언도킹 정상",
+    "importance": "참고",
+    "evidence": [
+     "R00009"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:20:44.910",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.2.txt:L67",
+    "event": "Goal reached successfully (5.00, 5.00)",
+    "interpretation": "첫 번째 주행은 정상 도착",
+    "importance": "참고",
+    "evidence": [
+     "R00020"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:04.920",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.2.txt:L76",
+    "event": "Move to Target (-7.0, -4.0, 180.0) 수신",
+    "interpretation": "접수된 '주방 이동'에 해당할 것으로 보이는 주행 명령(추정)",
+    "importance": "주요",
+    "evidence": [
+     "R00025",
+     "R00026"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:48.230",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.2.txt:L137",
+    "event": "RobotPose (-6.400, -3.400, -137.6deg)",
+    "interpretation": "낙하 IR 감지 직전 위치로, 목표 부근",
+    "importance": "주요",
+    "evidence": [
+     "R00039"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:48.430",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.2.txt:L138",
+    "event": "[DROP IR] ff detected.",
+    "interpretation": "낙하 IR 감지 시작",
+    "importance": "핵심",
+    "evidence": [
+     "R00040"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:48.440",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L1",
+    "event": "Cliff IR ff[1] : true, pre_position (-6.400, -3.400)",
+    "interpretation": "에러 모니터에서 낙하 IR 감지를 확인",
+    "importance": "주요",
+    "evidence": [
+     "R00041"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:48.740",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L2",
+    "event": "FREEZE→BACKUP (straight forward 0.20m @ 0.10m/s)",
+    "interpretation": "낙하 회피 동작 시작",
+    "importance": "주요",
+    "evidence": [
+     "R00042"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:49.140",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L3",
+    "event": "S07-2 (OCCURED): Cliff IR Detected",
+    "interpretation": "접수 증상 S07-2의 발생 줄(앵커)",
+    "importance": "핵심",
+    "evidence": [
+     "R00043"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:49.240",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L4",
+    "event": "Error-list stop active: forcing cmd_vel to zero",
+    "interpretation": "에러 목록에 따른 강제 정지",
+    "importance": "주요",
+    "evidence": [
+     "R00044"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:49.440",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L152",
+    "event": "handleError S07-2 status 1",
+    "interpretation": "SoC에서도 S07-2 발생을 수신해 교차 확인됨",
+    "importance": "주요",
+    "evidence": [
+     "R00045"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:53.240",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L11",
+    "event": "BACKUP done traveled=0.20m",
+    "interpretation": "회피 동작 완료",
+    "importance": "참고",
+    "evidence": [
+     "R00046"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:54.740",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L12",
+    "event": "released (IR clear + wall confirmed global+local)",
+    "interpretation": "IR 감지가 해소되어 비상 상태 해제",
+    "importance": "주요",
+    "evidence": [
+     "R00047"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:54.940",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L13",
+    "event": "S07-2 (RELEASED)",
+    "interpretation": "발생 약 5.8초 뒤(계산) 해제",
+    "importance": "핵심",
+    "evidence": [
+     "R00048",
+     "R00049"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:31:56.940",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L14",
+    "event": "planner_server: Could not generate path between the given poses",
+    "interpretation": "S07-2 해제 직후 경로 생성 실패가 시작되어 3회 반복",
+    "importance": "핵심",
+    "evidence": [
+     "R00050",
+     "R00051",
+     "R00052"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:32:01.540",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L18",
+    "event": "Goal aborted. robot(-6.10, -3.10, 45.00deg)",
+    "interpretation": "목표 (-7,-4)에 도달하지 못하고 중단",
+    "importance": "핵심",
+    "evidence": [
+     "R00053",
+     "R00054"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:32:01.840",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L19",
+    "event": "S05 (OCCURED): Unable to reach target area",
+    "interpretation": "접수 증상 S05의 발생 줄(앵커)",
+    "importance": "핵심",
+    "evidence": [
+     "R00055",
+     "R00056"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:32:02.840",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L20",
+    "event": "Unexpected odometry change 0.412 (Tolerance 0.300)",
+    "interpretation": "회피 동작 직후 오도메트리 이상 변화가 함께 기록됨",
+    "importance": "주요",
+    "evidence": [
+     "R00057"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:42:07.840",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L25",
+    "event": "ReturnToCharger 수신",
+    "interpretation": "약 10분 뒤(계산) 복귀 명령",
+    "importance": "주요",
+    "evidence": [
+     "R00059",
+     "R00060"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:42:07.940",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L26",
+    "event": "S05 (RELEASED)",
+    "interpretation": "복귀 명령 직후 S05 해제",
+    "importance": "핵심",
+    "evidence": [
+     "R00061",
+     "R00066"
+    ]
+   },
+   {
+    "time": "2026-11-01 09:42:31.500",
+    "time_basis": "AMR",
+    "source": "AMR airbot_log",
+    "file_line": "airbot_log.1.txt:L69",
+    "event": "DOCKING → ONSTATION",
+    "interpretation": "도킹 정상 완료",
+    "importance": "주요",
+    "evidence": [
+     "R00082",
+     "R00084"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:07:30.000",
+    "time_basis": "AMR",
+    "source": "AMR otalog",
+    "file_line": "airbot_ota/otalog.log:L4",
+    "event": "eth0 carrier=0",
+    "interpretation": "충전 중 AMR 쪽 이더넷 carrier 소실",
+    "importance": "핵심",
+    "evidence": [
+     "R00093"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:07:31.000",
+    "time_basis": "AMR",
+    "source": "AMR journal",
+    "file_line": "network_system_logs/1/journal.log:L11",
+    "event": "kernel: dwmac eth0: Link is Down",
+    "interpretation": "커널에서도 링크 다운 확인",
+    "importance": "주요",
+    "evidence": [
+     "R00094",
+     "R00095",
+     "R00097"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:07:31.500",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L316",
+    "event": "Ethernet[eth0] is link-down",
+    "interpretation": "SoC 쪽에서도 같은 시각에 link-down 기록",
+    "importance": "주요",
+    "evidence": [
+     "R00098",
+     "R00099"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:07:36.500",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L320",
+    "event": "SocketTimeoutException (x6)",
+    "interpretation": "단절 중 요청 응답 없음",
+    "importance": "참고",
+    "evidence": [
+     "R00101",
+     "R00102"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:07:57.500",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L324",
+    "event": "handleError E09 status 1",
+    "interpretation": "접수된 E09의 발생 줄(앵커)",
+    "importance": "핵심",
+    "evidence": [
+     "R00103",
+     "R00104"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:08:01.500",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L328",
+    "event": "Ping to 10.10.0.2: Request timed out",
+    "interpretation": "AMR까지 ping 실패",
+    "importance": "참고",
+    "evidence": [
+     "R00105",
+     "R00107"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:09:28.000",
+    "time_basis": "AMR",
+    "source": "AMR journal",
+    "file_line": "network_system_logs/1/journal.log:L13",
+    "event": "eth0 Link is Up - 100Mbps/Full",
+    "interpretation": "약 2분 뒤(계산) 링크 복구",
+    "importance": "주요",
+    "evidence": [
+     "R00109",
+     "R00111",
+     "R00112"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:09:44.500",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L344",
+    "event": "setAMRConnected() true",
+    "interpretation": "애플리케이션 연결 재수립(estab=1)",
+    "importance": "주요",
+    "evidence": [
+     "R00116",
+     "R00117"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:09:51.500",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L345",
+    "event": "handleError E09 status 2",
+    "interpretation": "E09 해제",
+    "importance": "핵심",
+    "evidence": [
+     "R00118",
+     "R00119"
+    ]
+   },
+   {
+    "time": "2026-11-01 10:19:40.000",
+    "time_basis": "SoC환산",
+    "source": "SoC logcat",
+    "file_line": "soc/logs/logcat.1.gz:L389",
+    "event": "Ping to 10.10.0.2: time=0.42 ms",
+    "interpretation": "이후 통신 정상",
+    "importance": "참고",
+    "evidence": [
+     "R00123"
+    ]
+   }
+  ],
+  "error_codes": [
+   {
+    "code": "S07-2",
+    "name": "Cliff IR Detected",
+    "occurred": "2026-11-01 09:31:49.140",
+    "cleared": "2026-11-01 09:31:54.940",
+    "end_type": "정상 해제",
+    "count": 1,
+    "evidence": [
+     "R00043",
+     "R00045",
+     "R00048",
+     "R00049",
+     "EV067"
+    ]
+   },
+   {
+    "code": "S05",
+    "name": "Unable to reach target area",
+    "occurred": "2026-11-01 09:32:01.840",
+    "cleared": "2026-11-01 09:42:07.940",
+    "end_type": "장시간 유지 후 해제",
+    "count": 1,
+    "evidence": [
+     "R00055",
+     "R00056",
+     "R00061",
+     "R00066",
+     "EV069"
+    ]
+   },
+   {
+    "code": "E09",
+    "name": "통신 불량(SoC-AMR 연결 끊김)",
+    "occurred": "2026-11-01 10:07:57.500",
+    "cleared": "2026-11-01 10:09:51.500",
+    "end_type": "정상 해제",
+    "count": 1,
+    "evidence": [
+     "R00103",
+     "R00104",
+     "R00118",
+     "R00119",
+     "EV071"
+    ]
+   }
+  ],
+  "hypothesis_check": [
+   {
+    "hypothesis": "낙하센서 불량이 의심됩니다.",
+    "verdict": "판단 불가",
+    "reason": "낙하 IR(ff) 감지와 S07-2는 로그 전체에서 1회뿐이며, 회피 동작 뒤 'IR clear'로 정상 해제되었습니다. 해당 위치에 실제 단차나 바닥 조건이 있었는지, 그리고 센서 원시값은 로그로 확인할 수 없어 실제 감지인지 오감지인지 구분할 수 없습니다. 또 S05는 S07-2가 해제된 뒤 경로 생성 실패에 이어 발생한 것이며, 낙하센서와의 직접적인 관련은 로그에 기록되어 있지 않습니다.",
+    "evidence": [
+     "R00040",
+     "R00041",
+     "R00047",
+     "R00048",
+     "R00050",
+     "R00055",
+     "EV067"
+    ]
+   }
+  ],
+  "need_more_info": [
+   {
+    "item": "(-6.4, -3.4) 부근의 현장 바닥 상태(단차, 문턱, 어두운 바닥재, 반사면 등)",
+    "reason": "낙하 IR 감지가 실제 단차 때문인지 오감지인지 구분하기 위해",
+    "how": "현장 사진·영상 확보와 맵상 위치 대조"
+   },
+   {
+    "item": "목표 좌표 (-7.0, -4.0)과 '주방' 위치의 대응 여부",
+    "reason": "접수된 주방 이동이 이 명령인지 확정하기 위해",
+    "how": "현장 맵과 POI 설정 확인"
+   },
+   {
+    "item": "낙하 IR 센서 원시값과 해당 위치의 반복 주행 이력",
+    "reason": "센서 불량 가설을 판단하려면 재현성과 센서 출력이 필요함",
+    "how": "다른 날짜 로그 수집, 같은 경로에서 재현 시험, 센서 원시값 로깅"
+   },
+   {
+    "item": "09:31:56~09:32:01 경로 생성 실패 시점의 costmap과 맵 상태",
+    "reason": "S05로 이어진 경로 생성 실패의 배경은 로그로 확인할 수 없음",
+    "how": "rosbag 또는 costmap 스냅샷 확보, planner 디버그 로그 확인"
+   },
+   {
+    "item": "10:07:30 eth0 링크 단절 당시 하드웨어 상태",
+    "reason": "양쪽 모두 물리 링크 다운이 기록되어 있으나 케이블·커넥터 등 원인은 로그로 확인할 수 없음",
+    "how": "내부 이더넷 케이블·커넥터 점검, 현장 작업자에게 당시 접촉·충격이 있었는지 확인"
+   }
+  ],
+  "confidence": {
+   "level": "높음",
+   "reason": "S07-2, S05, E09 모두 발생 줄과 해제 줄이 있습니다. S07-2와 S05는 AMR airbot_log와 SoC logcat에서, 링크 단절은 otalog·journal·dmesg·logcat에서 교차 확인되었습니다. 다만 낙하센서 불량 여부는 로그만으로 판단할 수 없습니다.",
+   "evidence_lines": [
+    "R00043",
+    "R00045",
+    "R00048",
+    "R00049",
+    "R00055",
+    "R00056",
+    "R00061",
+    "R00094",
+    "R00098",
+    "R00103",
+    "R00118"
+   ]
+  }
+ }
+}

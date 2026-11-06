@@ -4,6 +4,7 @@
     python scripts/make_demo_data.py [출력 폴더]
     → <출력 폴더>/20261101153000_DEMOBOTSN000000001.zip  (amr/AMR_LOG.tar.gz 포함, NAS 수집본과 같은 구조)
 """
+import gzip
 import io
 import json
 import math
@@ -154,7 +155,7 @@ def make_log_lines():
     L.boot()
     L.now = datetime(2026, 11, 1, 8, 59, 50)            # SoC 시간 동기화
     L.emit("udp_interface", "soc-cmd received : reqSetTimeData year : 2026, month : 11, day : 1, hour : 8, "
-                            "minute : 59, second : 50")
+                            "minute : 59, second : 53")   # 페이로드 = SoC 시각 (SoC 시계가 약 3초 빠름)
     L.emit("state_manager", "SET ROBOT_STATE STATE : ONSTATION", dt=1)
     L.emit("state_manager", "[setOnstationStatus] OnStation docking-Status hex[16]")
     L.emit("scan_monitor", "[checkScanHz] scan state is front[OFF], back[OFF]")
@@ -243,7 +244,7 @@ def make_log_lines():
         L.emit("airbot_node_manager", f"[node_monitor] [NAVI] Required node [{node}] is NOT running.", "WARN", dt=1.0)
     L.now = datetime(2026, 11, 1, 11, 32, 10)
     L.emit("udp_interface", "soc-cmd received : reqSetTimeData year : 2026, month : 11, day : 1, hour : 11, "
-                            "minute : 32, second : 10")
+                            "minute : 32, second : 13")
     L.emit("state_manager", "SET ROBOT_STATE STATE : ONSTATION", dt=1)
     L.battery(charging=True)
     L.idle(30, charging=True)
@@ -279,6 +280,178 @@ def make_log_lines():
     return L.lines
 
 
+# ---------------------------------------------------------------- 분석용 다른 로그 (otalog · journal/dmesg · SoC logcat)
+SOC_AHEAD = 3.5          # SoC 시계가 AMR 보다 빠른 정도 (초)
+E09_AFTER_DOCK = 25      # 첫 복귀 도킹 후 몇 분 뒤 통신 불량(E09) 구간
+
+
+def _amr_times(lines):
+    """AMR 로그에서 SoC 쪽 데모 로그를 맞출 기준 시각들."""
+    out = {}
+    keys = {"move1": "soc-cmd received : Move to Target (5.0", "move2": "soc-cmd received : Move to Target (-7.0",
+            "s072_on": "S07-2 (OCCURED)", "s072_off": "S07-2 (RELEASED)", "s05_on": "S05 (OCCURED)",
+            "s05_off": "S05 (RELEASED)", "ret1": "soc-cmd received : ReturnToCharger", "dock1": "DONE_DOCKING",
+            "reboot": "soc-cmd received : Reboot", "move3": "soc-cmd received : Move to Target (8.0"}
+    for line in lines:
+        if not line.startswith("[") or line[5] != "-":
+            continue
+        t = datetime.strptime(line[1:24], "%Y-%m-%d %H:%M:%S.%f")
+        for k, needle in keys.items():
+            if k not in out and needle in line:
+                out[k] = t
+    return out
+
+
+def _soc(t, pid, tid, lvl, tag, msg):
+    s = t + timedelta(seconds=SOC_AHEAD)
+    return (s, f"{s:%m-%d %H:%M:%S}.{s.microsecond // 1000:03d} {pid:5d} {tid:5d} {lvl} {tag}: {msg}")
+
+
+def make_soc_lines(times):
+    rows = []
+    start = datetime(2026, 11, 1, 8, 59, 40)
+    end = datetime(2026, 11, 1, 13, 30, 0)
+    rng = random.Random(11)
+    t = start
+    while t < end:                                          # 주기 로그 + 잡음
+        rows.append(_soc(t, 3652, 3672, "D", "CaptureSession", "Issuing request for session."))
+        if rng.random() < 0.15:
+            rows.append(_soc(t + timedelta(seconds=0.4), 2210, 2210, "E", "ActivityThread",
+                             "Failed to find provider info for com.demo.settings"))
+        t += timedelta(seconds=20)
+    t = start
+    while t < end:
+        rows.append(_soc(t, 1880, 1902, "I", "EthernetAgent", "Ping to 10.10.0.2: time=0.42 ms"))
+        t += timedelta(seconds=60)
+    rows.append(_soc(datetime(2026, 11, 1, 8, 59, 49, 600000), 1880, 1890, "I", "AMRAgent",
+                     "sent SyncTime : A1DateTime: {year=2026, month=11, day=1, hour=8, minute=59, second=53}"))
+    for key, cmd in (("move1", "Move to Target (5.0, 5.0, 90.0)"), ("move2", "Move to Target (-7.0, -4.0, 180.0)"),
+                     ("ret1", "ReturnToCharger"), ("reboot", "Reboot"), ("move3", "Move to Target (8.0, -2.0, 0.0)")):
+        if key in times:
+            rows.append(_soc(times[key] - timedelta(seconds=0.05), 1880, 1890, "I", "AMRAgent", f"sent: {cmd}"))
+    for key, code, st in (("s072_on", "S07-2", 1), ("s072_off", "S07-2", 2), ("s05_on", "S05", 1), ("s05_off", "S05", 2)):
+        if key in times:
+            rows.append(_soc(times[key] + timedelta(seconds=0.3), 1880, 1895, "I", "DeviceAgent",
+                             f"[null:96] : handleError From AMR: code = {code}, priority: 5, status : {st}"))
+    if "dock1" in times:                                    # 통신 불량(E09) 구간: 이더넷 링크 끊김 2분
+        T = times["dock1"] + timedelta(minutes=E09_AFTER_DOCK)
+        rows.append(_soc(T, 1880, 1890, "W", "AMRAgent", "Ethernet[eth0] is link-down"))
+        rows.append(_soc(T + timedelta(seconds=0.2), 1880, 1890, "I", "EthernetAgent", "Ethernet is disconnect."))
+        rows.append(_soc(T + timedelta(seconds=5), 1880, 1890, "I", "AMRAgent", "setAMRConnected() Set New Value: false"))
+        for k in range(6):
+            rows.append(_soc(T + timedelta(seconds=5 + 20 * k), 1880, 1890, "E", "AMRAgent",
+                             "[null:639] : SocketTimeoutException !!!"))
+        rows.append(_soc(T + timedelta(seconds=26), 1880, 1895, "I", "DeviceAgent",
+                         "[null:96] : handleError From AMR: code = E09, priority: 13, status : 1"))
+        rows.append(_soc(T + timedelta(seconds=26.1), 1880, 1895, "I", "DeviceAgent",
+                         f"[ELM] log:{T + timedelta(seconds=26 + SOC_AHEAD):%Y-%m-%d-%H-%M-%S}, E09, occured"))
+        for k in (30, 90):
+            rows.append(_soc(T + timedelta(seconds=k), 1880, 1902, "W", "EthernetAgent", "Ping to 10.10.0.2: Request timed out"))
+        rows.append(_soc(T + timedelta(seconds=118), 1880, 1890, "I", "AMRAgent", "Ethernet[eth0] is link-up"))
+        rows.append(_soc(T + timedelta(seconds=133), 1880, 1890, "I", "AMRAgent", "setAMRConnected() Set New Value: true"))
+        rows.append(_soc(T + timedelta(seconds=140), 1880, 1895, "I", "DeviceAgent",
+                         "[null:96] : handleError From AMR: code = E09, priority: 13, status : 2"))
+        rows.append(_soc(T + timedelta(seconds=140.1), 1880, 1895, "I", "DeviceAgent",
+                         f"[ELM] log:{T + timedelta(seconds=140 + SOC_AHEAD):%Y-%m-%d-%H-%M-%S}, E09, resolved"))
+        m = T - timedelta(minutes=3)
+        while m < T + timedelta(minutes=5):                  # 1분 주기 상태 보고 (에러 중이면 E09 포함)
+            err = '"error":{"errorCode":"E09"}' if T + timedelta(seconds=26) <= m <= T + timedelta(seconds=140) else '"error":null'
+            rows.append(_soc(m, 2600, 2640, "I", "IotAgent",
+                             '{"serial":"DEMOBOTSN000000001","timestamp":"' + (m - timedelta(hours=9)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                             + '","robotStatus":"' + ("ERROR" if "E09" in err else "CHARGING") + '",' + err + "}"))
+            m += timedelta(minutes=1)
+    rows.sort(key=lambda r: r[0])
+    return [r[1] for r in rows]
+
+
+def make_ota_lines(times):
+    out = []
+    start = datetime(2026, 11, 1, 8, 59, 45)
+    out.append(f"[{start:%Y-%m-%d %H:%M:%S}] [INFO] Start OTA Process")
+    out.append(f"[{start:%Y-%m-%d %H:%M:%S}] [INFO] OTA Process Running Version : 0.3.50")
+    out.append(f"[{start + timedelta(seconds=8):%Y-%m-%d %H:%M:%S}] [INFO] [NET] eth0 UP [L1:carrier=1] [L2:arp=ok] "
+               "[L3:ip=yes default=yes] [L4:listen=yes estab=1 port=20000]")
+    if "dock1" in times:
+        T = times["dock1"] + timedelta(minutes=E09_AFTER_DOCK)
+        out.append(f"[{T - timedelta(seconds=1):%Y-%m-%d %H:%M:%S}] [WARN] [NET_RECOVERY][CARRIER][CHANGE] interface=eth0 carrier=0")
+        out.append(f"[{T:%Y-%m-%d %H:%M:%S}] [WARN] [NET] eth0 DOWN [REASON:NO_CARRIER] [L1:carrier=0]")
+        out.append(f"[{T + timedelta(seconds=2):%Y-%m-%d %H:%M:%S}] [INFO] [NET_RECOVERY][SYSTEM_LOG][SAVE_SUCCESS] path=network_system_logs/1")
+        out.append(f"[{T + timedelta(seconds=117):%Y-%m-%d %H:%M:%S}] [INFO] [NET_RECOVERY][CARRIER][CHANGE] interface=eth0 carrier=1")
+        out.append(f"[{T + timedelta(seconds=118):%Y-%m-%d %H:%M:%S}] [INFO] [NET] eth0 UP [L1:carrier=1] [L2:arp=ok] "
+                   "[L3:ip=yes default=yes] [L4:listen=yes estab=0 port=20000]")
+        out.append(f"[{T + timedelta(seconds=133):%Y-%m-%d %H:%M:%S}] [INFO] [NET] eth0 UP [L1:carrier=1] [L2:arp=ok] "
+                   "[L3:ip=yes default=yes] [L4:listen=yes estab=1 port=20000]")
+    if "reboot" in times:
+        r = times["reboot"]
+        out.append(f"[{r + timedelta(seconds=3):%Y-%m-%d %H:%M:%S}] [INFO] Received signal: SIGTERM (15)")
+        out.append(f"[{r + timedelta(seconds=3):%Y-%m-%d %H:%M:%S}] [INFO] Program exited normally.")
+    return out
+
+
+def make_snapshot(times):
+    """링크가 끊긴 순간 저장된 journal/dmesg (dmesg 는 부팅 후 경과초)."""
+    if "dock1" not in times:
+        return "", ""
+    T = times["dock1"] + timedelta(minutes=E09_AFTER_DOCK)
+    boot = datetime(2026, 11, 1, 8, 59, 30)                 # 이 스냅샷 기준 커널 부팅 시각 (데모)
+    j, d = [], []
+
+    def both(t, msg):
+        j.append(f"{t:%b} {t.day:2d} {t:%H:%M:%S} demo-amr kernel: {msg}")
+        d.append(f"[{(t - boot).total_seconds() + 0.123456:12.6f}] {msg}")
+
+    t0 = T - timedelta(minutes=10)
+    for k in range(10):
+        t = t0 + timedelta(minutes=k)
+        j.append(f"{t:%b} {t.day:2d} {t:%H:%M:%S} demo-amr robot-start[1009]: [airbot_error_monitor] [INFO] Memory Usage: 24.1%")
+    both(T, "dwmac eth0: Link is Down")
+    j.append(f"{T:%b} {T.day:2d} {T:%H:%M:%S} demo-amr systemd-networkd[402]: eth0: Lost carrier")
+    both(T + timedelta(seconds=117), "dwmac eth0: Link is Up - 100Mbps/Full - flow control off")
+    j.append(f"{T + timedelta(seconds=117):%b} {T.day:2d} {T + timedelta(seconds=117):%H:%M:%S} demo-amr systemd-networkd[402]: eth0: Gained carrier")
+    return "\n".join(j) + "\n", "\n".join(d) + "\n"
+
+
+DEMO_EML = """From: =?utf-8?b?{from_b64}?= <reporter@example.com>
+To: analyst@example.com
+Subject: =?utf-8?b?{subj_b64}?=
+Date: Sun, 01 Nov 2026 16:10:00 +0900
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+{body}
+"""
+
+DEMO_BODY = """안녕하세요. 데모 현장 필드 이슈 검토 요청드립니다.
+
+**** 아 래 ****
+- 시리얼 번호: DEMOBOTSN000000001
+- 발생 시각: 2026년 11월 1일 오전 9시 30분경
+- 현상: 주방으로 이동하다가 낙하 에러(S07-2)가 뜨고 목표 도달 실패(S05)로 멈춤
+- 추가: 같은 날 10시쯤 앱에 통신 불량(E09)이 잠깐 표시됐다고 함
+- 1차 검토: 낙하센서 불량이 의심됩니다.
+
+File List
+- 20261101153000_DEMOBOTSN000000001.zip
+
+검토 부탁드립니다.
+
+감사합니다.
+홍길동 매니저 / 데모 플랫폼팀
+M. 010-1234-5678
+"""
+
+
+def write_demo_request(out_dir) -> Path:
+    import base64
+    eml = DEMO_EML.format(from_b64=base64.b64encode("홍길동/매니저".encode()).decode(),
+                          subj_b64=base64.b64encode("[필드 이슈] 주방 이동 중 낙하 에러(S07-2) 검토 요청의 건".encode()).decode(),
+                          body=DEMO_BODY)
+    p = Path(out_dir) / "demo_request.eml"
+    p.write_bytes(eml.replace("\n", "\r\n").encode("utf-8"))
+    return p
+
+
 def split_rotation(lines, parts=3):
     """airbot_log.2.txt(오래됨) → .1 → airbot_log.txt(최신)."""
     size = len(lines) // parts + 1
@@ -291,7 +464,14 @@ def make_demo(out_dir) -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     files = {f"log/{k}": v for k, v in map_files().items()}
-    files.update({f"log/{k}": v for k, v in split_rotation(make_log_lines()).items()})
+    lines = make_log_lines()
+    files.update({f"log/{k}": v for k, v in split_rotation(lines).items()})
+    times = _amr_times(lines)
+    files["log/airbot_ota/otalog.log"] = ("\n".join(make_ota_lines(times)) + "\n").encode("utf-8")
+    journal, dmesg = make_snapshot(times)
+    files["log/airbot_ota/network_system_logs/1/journal.log"] = journal.encode("utf-8")
+    files["log/airbot_ota/network_system_logs/1/dmesg.log"] = dmesg.encode("utf-8")
+    files["log/airbot_ota/network_system_logs/rotation_index"] = b"1\n"
     tar_buf = io.BytesIO()
     with tarfile.open(fileobj=tar_buf, mode="w:gz") as tf:
         for name, data in sorted(files.items()):
@@ -302,7 +482,11 @@ def make_demo(out_dir) -> Path:
     out = out_dir / ZIP_NAME
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("amr/AMR_LOG.tar.gz", tar_buf.getvalue())
-        zf.writestr("soc/logs/logcat", "demo soc log (분석에 사용하지 않음)\n")
+        soc = make_soc_lines(times)
+        half = len(soc) // 2                                # 오래된 절반은 logcat.1.gz, 최신은 logcat
+        zf.writestr("soc/logs/logcat.1.gz", gzip.compress(("\n".join(soc[:half]) + "\n").encode("utf-8"), mtime=0))
+        zf.writestr("soc/logs/logcat", "\n".join(soc[half:]) + "\n")
+    write_demo_request(out_dir)
     return out
 
 

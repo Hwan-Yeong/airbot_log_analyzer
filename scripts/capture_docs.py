@@ -7,9 +7,11 @@
         [--demo-nas]          데모 압축으로 가짜 NAS 폴더를 만들어 NAS 창 캡처
         [--origin 문구]       상태바 출처 표시 (기본: 파일 경로)
         [--theme dark]        다크 테마로 캡처
+        [--analysis 예시.json] [분석] 창·보낼 내용·결과 캡처 (docs/examples/analysis_demo.json: 데모 데이터로 실제 분석한 결과)
 """
 import argparse
 import bisect
+import json
 import math
 import os
 import shutil
@@ -93,6 +95,7 @@ def main():
     ap.add_argument("--history", type=int, default=3, help="누적 표시 콤보 인덱스 (3=30분, 6=전체)")
     ap.add_argument("--origin", default="", help="상태바에 표시할 출처 (예: NAS: 폴더/파일.zip)")
     ap.add_argument("--theme", default="light", choices=["light", "dark"])
+    ap.add_argument("--analysis", default="", help="분석 예시 JSON (결과 캡처용, Claude 호출 없음)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -118,7 +121,8 @@ def main():
     shot = win.grab()
     shot.save(str(out / "main.png"))
     tb = win.findChild(QToolBar)
-    last = tb.actionGeometry(tb.actions()[-1])
+    info = next((a for a in tb.actions() if a.text() == "정보"), tb.actions()[-1])   # 오른쪽 끝 테마 버튼 말고 '정보' 옆
+    last = tb.actionGeometry(info)
     annotate(win, shot, [
         (tb, last.right() + 28, tb.height() // 2),
         (win.layer_panel, win.layer_panel.width() - 24, 18),
@@ -167,9 +171,65 @@ def main():
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    if args.analysis:
+        capture_analysis(app, win, S, Path(args.archive), Path(args.analysis), out)
+
     win.close()
     cfg_dir.cleanup()
     print("saved:", ", ".join(sorted(p.name for p in out.glob("*.png"))))
+
+
+def capture_analysis(app, win, S, archive: Path, example: Path, out: Path):
+    """[분석] 창 → 보낼 내용 확인 → 결과 (예시 JSON 의 실제 분석 결과를 그대로 표시, Claude 호출 없음)."""
+    from PySide6.QtCore import QDate, QDateTime, QTime
+
+    from airbotlog.analysis import claude as ai
+    from airbotlog.analysis import context as actx
+    from airbotlog.analysis import request as areq
+    from airbotlog.analysis.masking import Masker
+    from airbotlog.ui.analysis_dialog import AnalysisDialog, PreviewDialog, ResultDialog
+    ex = json.loads(example.read_text(encoding="utf-8"))
+    dlg = AnalysisDialog(win)
+    req_path = archive.parent / ex.get("request_file", "demo_request.eml")
+    if req_path.exists():
+        dlg.request = areq.read_mail(req_path)
+        dlg.ed_request.setPlainText(areq.strip_signature(dlg.request.text))
+    dlg.update_extract()
+    d, t = ex["anchor"].split()
+    y, mo, dd = (int(v) for v in d.split("-"))
+    h, mi, se = (int(v) for v in t.split(":"))
+    dlg.dt_anchor.setDateTime(QDateTime(QDate(y, mo, dd), QTime(h, mi, se)))
+    dlg.sp_before.setValue(ex["before_min"])
+    dlg.sp_after.setValue(ex["after_min"])
+    dlg.resize(820, 760)
+    dlg.show()
+    pump(app, 0.5)
+    dlg.grab().save(str(out / "analysis.png"))
+    text = areq.strip_signature(dlg.ed_request.toPlainText())
+    ctx = actx.build_context(S, text, areq.extract(text, dlg.ref, S.source.serial), dlg.options())
+    m = Masker()
+    m.add_serial(S.source.serial)
+    m.add_memo(S.source.memo)
+    m.add_names(dlg.request.names)
+    m.add_emails(dlg.request.emails)
+    pv = PreviewDialog(dlg, m.mask(ai.load_system_prompt()), m.mask(ctx.user_message()), m, ctx)
+    pv.resize(1000, 700)
+    pv.show()
+    pump(app, 0.4)
+    pv.grab().save(str(out / "analysis_preview.png"))
+    pv.close()
+    rd = ResultDialog(win, ctx, ex["result"], ex["meta"], text)
+    rd.resize(1300, 820)
+    rd.show()
+    tabs = rd.findChild(type(win.tabs))
+    tabs.setCurrentIndex(1)
+    pump(app, 0.5)
+    rd.grab().save(str(out / "analysis_result.png"))
+    tabs.setCurrentIndex(0)
+    pump(app, 0.3)
+    rd.grab().save(str(out / "analysis_result_summary.png"))
+    rd.close()
+    dlg.close()
 
 
 if __name__ == "__main__":

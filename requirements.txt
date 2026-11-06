@@ -3,3 +3,4 @@
 PySide6>=6.5,<6.12; python_version < "3.12"
 PySide6>=6.5; python_version >= "3.12"
 PyYAML>=5.4
+openpyxl>=3.1            # [분석] 엑셀 저장

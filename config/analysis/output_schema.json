@@ -1,0 +1,109 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "summary", "request_check", "phenomenon_detail", "timeline", "error_codes",
+               "hypothesis_check", "need_more_info", "confidence"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "summary": {"type": "string"},
+    "request_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claimed_symptom", "claimed_time", "log_time", "match", "note", "evidence"],
+      "properties": {
+        "claimed_symptom": {"type": "string"},
+        "claimed_time": {"type": "string"},
+        "log_time": {"type": "string"},
+        "match": {"type": "string", "enum": ["일치", "부분 일치", "불일치", "로그 범위 밖", "판단 불가"]},
+        "note": {"type": "string"},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "phenomenon_detail": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["no", "text", "evidence"],
+        "properties": {
+          "no": {"type": "integer"},
+          "text": {"type": "string"},
+          "evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["time", "time_basis", "source", "file_line", "event", "interpretation", "importance", "evidence"],
+        "properties": {
+          "time": {"type": "string"},
+          "time_basis": {"type": "string", "enum": ["AMR", "SoC환산", "SoC원본", "stale", "범위", "추정"]},
+          "source": {"type": "string"},
+          "file_line": {"type": "string"},
+          "event": {"type": "string"},
+          "interpretation": {"type": "string"},
+          "importance": {"type": "string", "enum": ["핵심", "주요", "참고"]},
+          "evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "error_codes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "name", "occurred", "cleared", "end_type", "count", "evidence"],
+        "properties": {
+          "code": {"type": "string"},
+          "name": {"type": "string"},
+          "occurred": {"type": "string"},
+          "cleared": {"type": "string"},
+          "end_type": {"type": "string", "enum": ["정상 해제", "장시간 유지 후 해제", "재부팅으로 소멸",
+                                                  "로그 종료까지 미해제", "해제 확인 불가", "해당 없음"]},
+          "count": {"type": "integer"},
+          "evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "hypothesis_check": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["hypothesis", "verdict", "reason", "evidence"],
+        "properties": {
+          "hypothesis": {"type": "string"},
+          "verdict": {"type": "string", "enum": ["지지", "반박", "판단 불가"]},
+          "reason": {"type": "string"},
+          "evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "need_more_info": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "reason", "how"],
+        "properties": {
+          "item": {"type": "string"},
+          "reason": {"type": "string"},
+          "how": {"type": "string"}
+        }
+      }
+    },
+    "confidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "reason", "evidence_lines"],
+      "properties": {
+        "level": {"type": "string", "enum": ["높음", "중간", "낮음"]},
+        "reason": {"type": "string"},
+        "evidence_lines": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

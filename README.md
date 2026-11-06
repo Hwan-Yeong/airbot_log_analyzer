@@ -13,6 +13,8 @@
 - **이벤트 목록**: 상태 전이·SOC 명령·주행·에러·도킹·센서 등 분류/검색, 클릭 시 해당 시점으로 이동
 - **원본 로그 동기화**: 현재 시점 줄 강조, 전체 검색, 더블클릭 이동
 - **에러/요약**: 시점별 활성 에러, 발생/해제 이력, 에러 코드별 집계, 부팅·주행·도킹 통계
+- **AI 현상 분석 [분석]**: 요청(구어체/메일) + airbot_log·otalog·journal·SoC logcat 통합 타임라인 → Claude Code → '현상'까지 정리, 엑셀 분석표
+  - 분석 구간 발췌만, 시리얼·이름·연락처 마스킹, 보내기 전 미리보기
 - **규칙 파일**: `config/rules.yaml` 수정만으로 이벤트·마커 추가
 - **라이트/다크 테마**: 툴바 오른쪽 해/달 아이콘
 
@@ -30,8 +32,8 @@
 - [변경 이력](CHANGELOG.md)
 
 ## 개발
-- 구조: `airbotlog/` (압축·NAS·파싱·모델), `airbotlog/ui/` (PySide6 화면), `config/` (설정·규칙)
+- 구조: `airbotlog/` (압축·NAS·파싱·모델), `airbotlog/analysis/` (분석: 다중 로그·발췌·마스킹·Claude·엑셀), `airbotlog/ui/` (PySide6 화면), `config/` (설정·규칙·분석 지침)
 - 테스트: `.venv/bin/pip install pytest` 후 `.venv/bin/python -m pytest tests` (데모 로그 자동 생성, UI 테스트 포함)
 - 데모 로그: `python scripts/make_demo_data.py <출력 폴더>`
-- 문서 캡처: `python scripts/capture_docs.py <로그 압축> [--nas]`
+- 문서 캡처: `python scripts/capture_docs.py <로그 압축> [--nas] [--analysis docs/examples/analysis_demo.json]`
 - 릴리스: 버전(`version.ini`) · `CHANGELOG.md` · 문서 캡처를 함께 갱신, 배포 파일은 `scripts/make_release.sh`
