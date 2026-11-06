@@ -24,9 +24,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["no", "text", "evidence"],
+        "required": ["no", "title", "text", "evidence"],
         "properties": {
           "no": {"type": "integer"},
+          "title": {"type": "string"},
           "text": {"type": "string"},
           "evidence": {"type": "array", "items": {"type": "string"}}
         }

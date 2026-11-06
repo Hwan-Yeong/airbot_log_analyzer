@@ -7,7 +7,6 @@ import html
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from PySide6.QtCore import QDate, QDateTime, Qt, QTime, QTimer
 from PySide6.QtGui import QFont
@@ -158,11 +157,11 @@ class AnalysisDialog(QDialog):
         self.ed_words = QLineEdit(", ".join(self.settings.get("analysis.mask_words", []) or []))
         self.ed_words.setPlaceholderText("현장명, 고객사 등 쉼표로 구분 (시리얼·이름·전화·이메일·링크는 자동)")
         f4.addRow("추가 마스킹 단어", self.ed_words)
-        gl = self.settings.get("analysis.guideline_file", "") or ""
-        self.chk_guide = QCheckBox("원본 지침 파일도 함께 보내기 (기본은 앱 내장 요약 지침만)")
-        self.chk_guide.setEnabled(bool(gl) and Path(gl).is_file())
-        self.chk_guide.setToolTip(gl or "설정 analysis.guideline_file 에 지침 파일 경로를 지정하면 사용할 수 있습니다.")
-        f4.addRow("지침", self.chk_guide)
+        gp = ai.guideline_path(self.settings.get("analysis.guideline_file", "") or "")
+        self.lbl_guide = QLabel(f"{gp.name} ({gp.stat().st_size // 1024} KB) — 전문을 함께 보내 모든 내용을 참고해 분석"
+                                if gp.is_file() else "지침 파일 없음 — 앱 기본 판단 규칙만 사용")
+        self.lbl_guide.setToolTip(f"{gp}\n(다른 파일을 쓰려면 사용자 설정 analysis.guideline_file 에 경로 지정)")
+        f4.addRow("지침", self.lbl_guide)
         lay.addWidget(g4)
 
         note = QLabel("다음 단계에서 Claude 로 보낼 전체 내용을 확인한 뒤 보냅니다. 원래 값(시리얼·이름 등)은 이 PC 에만 남습니다.")
@@ -277,12 +276,7 @@ class AnalysisDialog(QDialog):
         m.add_memo(src.memo if src else "")
         m.add_names(self.request.names)
         m.add_emails(self.request.emails)
-        guideline = ""
-        if self.chk_guide.isChecked():
-            try:
-                guideline = Path(self.settings.get("analysis.guideline_file")).read_text(encoding="utf-8")
-            except OSError as e:
-                QMessageBox.warning(self, "지침 파일", f"지침 파일을 읽지 못했습니다: {e}")
+        guideline = ai.load_guideline(self.settings.get("analysis.guideline_file", "") or "")
         system_prompt = m.mask(ai.load_system_prompt(guideline))
         message = m.mask(ctx.user_message())
         dlg = PreviewDialog(self, system_prompt, message, m, ctx)
@@ -445,7 +439,8 @@ class ResultDialog(QDialog):
         esc = html.escape
         parts = ["<h3>현상 상세</h3><ul style='list-style:none; margin-left:-24px'>"]   # 항목에 ①② 번호가 이미 있음
         for p in result.get("phenomenon_detail", []):
-            parts.append(f"<li>{esc(p.get('text', ''))} <span style='color:{t.hint}'>[{', '.join(p.get('evidence', []))}]</span></li>")
+            title = f"<b>{esc(p.get('title', ''))}</b> — " if p.get("title") else ""
+            parts.append(f"<li>{title}{esc(p.get('text', ''))} <span style='color:{t.hint}'>[{', '.join(p.get('evidence', []))}]</span></li>")
         parts.append("</ul><h3>접수 내용과 비교</h3>")
         parts.append(f"<p>접수: {esc(rc.get('claimed_symptom', ''))} ({esc(rc.get('claimed_time', '') or '-')})<br>"
                      f"로그: {esc(rc.get('log_time', '') or '-')} — <b>{esc(rc.get('match', ''))}</b><br>{esc(rc.get('note', ''))}</p>")
@@ -558,8 +553,7 @@ class ResultDialog(QDialog):
         if not path:
             return
         try:
-            axl.save(path, self.ctx, self.result, self.meta, self.request_text,
-                     title_prefix=st.get("analysis.title", "Airbot") or "Airbot")
+            axl.save(path, self.ctx, self.result, self.meta, title_prefix=st.get("analysis.title", "Airbot") or "Airbot")
         except (OSError, ImportError) as e:
             QMessageBox.warning(self, "엑셀 저장 실패", str(e))
             return

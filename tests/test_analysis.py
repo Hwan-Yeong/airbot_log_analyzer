@@ -121,7 +121,7 @@ def _valid_result(rid="R00001", ev="EV001"):
     return {"schema_version": "1.0", "summary": "S07-2 발생 후 S05",
             "request_check": {"claimed_symptom": "낙하", "claimed_time": "", "log_time": "", "match": "일치",
                               "note": "", "evidence": [rid]},
-            "phenomenon_detail": [{"no": 1, "text": "① 발생", "evidence": [rid, ev]}],
+            "phenomenon_detail": [{"no": 1, "title": "S07-2 발생", "text": "① 발생 [R00001]", "evidence": [rid, ev]}],
             "timeline": [{"time": "2026-11-01 09:31:49.140", "time_basis": "AMR", "source": "AMR airbot_log",
                           "file_line": "airbot_log.2.txt:L1", "event": "S07-2", "interpretation": "발생",
                           "importance": "핵심", "evidence": [rid]}],
@@ -213,16 +213,28 @@ def test_excel_export(session, tmp_path):
                                 context.Options(anchor=_event_t(session, "S07-2 발생")))
     first = next(ln for ln in ctx.lines if ln.rec is not None)
     res = _valid_result(rid=first.rid, ev=ctx.window_events[0].id)
-    path = excel.save(tmp_path / "out.xlsx", ctx, res, {"models": ["m"]}, "요청 원문")
+    path = excel.save(tmp_path / "out.xlsx", ctx, res, {"models": ["m"]})
     wb = openpyxl.load_workbook(path)
-    assert wb.sheetnames == ["요약", "타임라인", "에러 이력", "로그 커버리지·시각정렬", "원문 발췌", "요청 원문"]
+    assert wb.sheetnames == ["요약", "타임라인", "로그 파일"]
     tl = wb["타임라인"]
-    assert [c.value for c in tl[1]][:3] == ["No", "시각(AMR 기준)", "시각 기준"]
-    assert tl["B2"].value.year == 2026 and tl["B2"].number_format == excel.TIME_FMT
-    assert tl["J2"].value == first.rec.text                        # 근거 줄 원문
-    labels = {r[0].value: r[1].value for r in wb["요약"].iter_rows(min_row=4) if r[0].value}
-    assert labels["원인"] == "(사람 작성)" and labels["현상 (한 줄)"] == res["summary"]
-    src = wb["원문 발췌"]
-    assert src["A2"].value == "R00001"
+    assert [c.value for c in tl[4]] == ["No", "시각", "출처 (파일:줄)", "실제 로그 (원문)", "설명"]
+    assert tl["B5"].value.year == 2026 and tl["B5"].number_format == excel.TIME_FMT
+    dev = "SoC" if first.rec.src.startswith("SoC") else "AMR"
+    assert tl["C5"].value == f"{dev} {first.rec.file}:L{first.rec.line}"   # 출처는 근거 줄에서
+    assert tl["D5"].value == first.rec.text + (f"  {first.note}" if first.note else "")   # 원문 (+반복 표시), id 열 없음
+    assert tl["E5"].value.startswith("★ ")                          # 핵심 행 표시
+    summ = [[c.value for c in row] for row in wb["요약"].iter_rows()]
+    flat = [v for row in summ for v in row if v]
+    assert "[현상]" in flat and "S07-2 발생" in flat and "(사람 작성)" in flat
+    assert not any("R00001" in str(v) for v in flat)                 # 근거 id 는 엑셀에 쓰지 않음
+    assert wb["로그 파일"]["A3"].value == "대상"
     name = excel.default_name("Airbot_{serial6}_{issue}_현상분석_{date}_AI.xlsx", "DEMOBOTSN000000001", "S07-2")
     assert re.fullmatch(r"Airbot_000001_S07-2_현상분석_\d{6}_AI\.xlsx", name)
+
+
+def test_system_prompt_includes_full_guideline():
+    g = ai.load_guideline()
+    assert len(g) > 1000                                              # config/analysis/guideline.md
+    sp = ai.load_system_prompt(g)
+    assert "<guideline>" in sp and g.strip()[:200] in sp
+    assert ai.guideline_path("/nonexistent/x.md") == ai.GUIDELINE_PATH

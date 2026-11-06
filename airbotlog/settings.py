@@ -36,7 +36,7 @@ DEFAULTS = {
         "after_min": 5,
         "max_lines": 1500,          # 보낼 발췌 최대 줄 수 / 글자 수
         "max_chars": 150000,
-        "guideline_file": "",       # 원본 지침 파일 (선택, 보낼 때마다 확인)
+        "guideline_file": "",       # 다른 지침 파일 경로 (비우면 config/analysis/guideline.md)
         "mask_words": [],           # 추가 마스킹 단어 (현장명 등)
         "mask_patterns": [],        # 추가 마스킹 정규식
         "excel_name": "Airbot_{serial6}_{issue}_현상분석_{date}_AI.xlsx",

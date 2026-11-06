@@ -370,7 +370,7 @@ def make_ota_lines(times):
     out.append(f"[{start:%Y-%m-%d %H:%M:%S}] [INFO] Start OTA Process")
     out.append(f"[{start:%Y-%m-%d %H:%M:%S}] [INFO] OTA Process Running Version : 0.3.50")
     out.append(f"[{start + timedelta(seconds=8):%Y-%m-%d %H:%M:%S}] [INFO] [NET] eth0 UP [L1:carrier=1] [L2:arp=ok] "
-               "[L3:ip=yes default=yes] [L4:listen=yes estab=1 port=20000]")
+               "[L3:ip=yes default=yes] [L4:listen=yes estab=1 port=9000]")
     if "dock1" in times:
         T = times["dock1"] + timedelta(minutes=E09_AFTER_DOCK)
         out.append(f"[{T - timedelta(seconds=1):%Y-%m-%d %H:%M:%S}] [WARN] [NET_RECOVERY][CARRIER][CHANGE] interface=eth0 carrier=0")
@@ -378,9 +378,9 @@ def make_ota_lines(times):
         out.append(f"[{T + timedelta(seconds=2):%Y-%m-%d %H:%M:%S}] [INFO] [NET_RECOVERY][SYSTEM_LOG][SAVE_SUCCESS] path=network_system_logs/1")
         out.append(f"[{T + timedelta(seconds=117):%Y-%m-%d %H:%M:%S}] [INFO] [NET_RECOVERY][CARRIER][CHANGE] interface=eth0 carrier=1")
         out.append(f"[{T + timedelta(seconds=118):%Y-%m-%d %H:%M:%S}] [INFO] [NET] eth0 UP [L1:carrier=1] [L2:arp=ok] "
-                   "[L3:ip=yes default=yes] [L4:listen=yes estab=0 port=20000]")
+                   "[L3:ip=yes default=yes] [L4:listen=yes estab=0 port=9000]")
         out.append(f"[{T + timedelta(seconds=133):%Y-%m-%d %H:%M:%S}] [INFO] [NET] eth0 UP [L1:carrier=1] [L2:arp=ok] "
-                   "[L3:ip=yes default=yes] [L4:listen=yes estab=1 port=20000]")
+                   "[L3:ip=yes default=yes] [L4:listen=yes estab=1 port=9000]")
     if "reboot" in times:
         r = times["reboot"]
         out.append(f"[{r + timedelta(seconds=3):%Y-%m-%d %H:%M:%S}] [INFO] Received signal: SIGTERM (15)")

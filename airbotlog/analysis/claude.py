@@ -20,6 +20,7 @@ from ..settings import CONFIG_DIR
 
 PROMPT_PATH = CONFIG_DIR / "analysis" / "system_prompt.md"
 PROMPT_GENERIC_PATH = CONFIG_DIR / "analysis" / "system_prompt_generic.md"
+GUIDELINE_PATH = CONFIG_DIR / "analysis" / "guideline.md"
 SCHEMA_PATH = CONFIG_DIR / "analysis" / "output_schema.json"
 CAUSAL_RE = re.compile(r"원인은|때문에|로 인해|으로 인해")
 ID_RE = re.compile(r"^(?:R\d{5}|EV\d{3})$")
@@ -34,11 +35,29 @@ def _noop(*_args, **_kwargs):
     pass
 
 
+def guideline_path(path_setting: str = "") -> Path:
+    """분석 지침 파일: 설정 analysis.guideline_file 이 있으면 그 파일(최신본), 없으면 config/analysis/guideline.md."""
+    if path_setting and Path(path_setting).is_file():
+        return Path(path_setting)
+    return GUIDELINE_PATH
+
+
+def load_guideline(path_setting: str = "") -> str:
+    p = guideline_path(path_setting)
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def load_system_prompt(guideline: str = "") -> str:
+    """역할·판단 규칙·출력 형식 + 분석 지침 전문 (지침의 모든 정보를 참고해 분석)."""
     path = PROMPT_PATH if PROMPT_PATH.exists() else PROMPT_GENERIC_PATH
     text = path.read_text(encoding="utf-8")
     if guideline.strip():
-        text += ("\n\n[참고 지침 원문]\n아래는 사용자가 함께 보낸 분석 지침입니다. 위 [판단 규칙]과 [출력]이 우선합니다.\n"
+        text += ("\n\n[분석 지침 전문]\n아래 지침의 로그 형식·판정 규칙·시그니처·주의사항·과거 사례를 모두 참고해 분석합니다. "
+                 "지침의 grep·스크립트 레시피는 참고용이며, 이번 분석의 근거는 사용자 메시지로 제공된 발췌뿐입니다. "
+                 "지침과 위 [판단 규칙]·[출력]이 다르면 위 내용이 우선합니다.\n"
                  "<guideline>\n" + guideline.strip() + "\n</guideline>\n")
     return text
 

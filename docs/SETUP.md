@@ -66,9 +66,11 @@ sudo mount -t cifs "//<NAS 서버>/<공유 폴더>/<로그 폴더>" \
 analysis:
   claude_path: 'C:\Users\<사용자>\.local\bin\claude.exe'   # 비우면 PATH 에서 찾음
   model: ''                 # 비우면 Claude Code 기본 모델
-  guideline_file: ''        # 원본 분석 지침(.md) 경로 (선택, 보낼 때마다 체크해서 포함)
+  guideline_file: ''        # 다른 지침 파일(예: 최신본) 경로. 비우면 config/analysis/guideline.md
   mask_words: [현장명, 고객사]  # 항상 마스킹할 단어
 ```
 
 - 호출 방식: 도구 없음(`--tools ""`), 개인 설정·메모리 미사용(`--safe-mode`), 세션 기록 안 남김, 빈 임시 폴더에서 실행 → 앱이 보낸 텍스트만 봅니다.
 - 보내기 전에 전체 내용을 미리보기로 확인합니다. 원래 값(시리얼·이름 등)은 PC 에만 남고 결과를 표시할 때 복원합니다.
+- 분석 지침은 `config/analysis/guideline.md` 전문을 매번 함께 보냅니다 (지침을 고치면 다음 분석부터 반영).
+- Claude Code 가 API 키(`ANTHROPIC_API_KEY`)로 인증돼 있으면 크레딧이 필요합니다 ("Credit balance is too low" 오류 시 충전 또는 다른 계정으로 로그인).

@@ -25,4 +25,4 @@ analysis:              # [분석] AI 현상 분석 (Claude Code CLI 필요, docs
   after_min: 5
   excel_name: 'Airbot_{serial6}_{issue}_현상분석_{date}_AI.xlsx'
   title: 'Airbot'
-  guideline_file: ''   # 원본 지침 파일 경로 (선택). 보낼 때마다 [원본 지침 파일도 함께 보내기]로 선택
+  guideline_file: ''   # 다른 지침 파일(예: 최신본) 경로. 비우면 config/analysis/guideline.md 전문을 함께 보냄
