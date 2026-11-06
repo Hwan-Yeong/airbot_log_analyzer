@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QGridLayout, 
                                QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from .. import APP_NAME, __version__
+from ..analysis import request as areq
 from ..loader import load_session
 from ..mapdata import load_map
 from ..model import fmt_time
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
         self.ws = Workspace(self.settings.get("workspace.temp_root") or None)
         Workspace.cleanup_stale(self.settings.get("workspace.temp_root") or None)
         self.session = None
+        self._pending_mails = None      # 로그와 함께 끌어다 놓은 메일 (로그를 연 뒤 [분석] 창에 넣음)
         self.vt = 0.0
         self.playing = False
         self.speed = float(self.settings.get("playback.speed", 10))
@@ -318,6 +320,7 @@ class MainWindow(QMainWindow):
 
         def failed(msg):
             finish()
+            self._pending_mails = None
             QMessageBox.warning(self, "불러오기 실패", msg)
 
         self._worker.on_progress = dlg.set_progress
@@ -349,6 +352,9 @@ class MainWindow(QMainWindow):
         self.lbl_ws.setText(f"임시 폴더: {self.ws.path} (종료 시 자동 삭제)" if self.ws.path else "")
         self._apply_display()
         self.set_vt(0.0, "seek")
+        mails, self._pending_mails = self._pending_mails, None
+        if mails:                                         # 로그와 함께 끌어다 놓은 메일 → [분석] 창에 넣음
+            self.open_analysis(mails)
 
     def _timeline_marks(self, S):
         marks = []
@@ -652,9 +658,14 @@ class MainWindow(QMainWindow):
                             S.files[e.fi].name, e.ln + 1])
         self.statusBar().showMessage(f"저장: {path}", 4000)
 
-    def open_analysis(self):
+    def open_analysis(self, mails=None):
         if self.session is None:
-            QMessageBox.information(self, "분석", "먼저 로그를 불러오세요.")
+            if mails:
+                self._pending_mails = list(mails)
+                QMessageBox.information(self, "분석", "먼저 로그를 불러오세요.\n"
+                                        "로그를 열면 끌어다 놓은 메일을 [분석] 창에 바로 넣습니다.")
+            else:
+                QMessageBox.information(self, "분석", "먼저 로그를 불러오세요.")
             return
         from .analysis_dialog import AnalysisDialog
         dlg = getattr(self, "_analysis", None)
@@ -662,6 +673,8 @@ class MainWindow(QMainWindow):
             self._analysis = dlg = AnalysisDialog(self)      # 비모달: 열어 둔 채로 재생·이동 가능
         dlg.show()
         dlg.raise_()
+        if mails:
+            dlg.load_mail_paths(mails)
 
     def edit_nas_path(self):
         NasPathDialog(self.settings, self).exec()
@@ -682,9 +695,16 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, e):
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.toLocalFile()]
-        if paths:
-            self.load_inputs(paths)
-            e.acceptProposedAction()
+        if not paths:
+            return
+        e.acceptProposedAction()
+        mails = [p for p in paths if areq.is_mail_file(p)]      # 메일 파일은 [분석] 창으로, 나머지는 로그로
+        logs = [p for p in paths if p not in mails]
+        if logs:
+            self._pending_mails = mails or None
+            self.load_inputs(logs)
+        else:
+            self.open_analysis(mails)
 
     def closeEvent(self, e):
         self.pause()

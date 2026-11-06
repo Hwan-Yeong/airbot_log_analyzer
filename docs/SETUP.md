@@ -74,3 +74,8 @@ analysis:
 - 보내기 전에 전체 내용을 미리보기로 확인합니다. 원래 값(시리얼·이름 등)은 PC 에만 남고 결과를 표시할 때 복원합니다.
 - 분석 지침은 `config/analysis/guideline.md` 전문을 매번 함께 보냅니다 (지침을 고치면 다음 분석부터 반영).
 - Claude Code 가 API 키(`ANTHROPIC_API_KEY`)로 인증돼 있으면 크레딧이 필요합니다 ("Credit balance is too low" 오류 시 충전 또는 다른 계정으로 로그인).
+- **[Outlook 선택 메일]**: Windows 의 **클래식 Outlook** 이 실행 중이어야 합니다 (PowerShell 로 Outlook 에서 직접 읽음, WSL 에서도 동작).
+  새 Outlook 은 지원하지 않습니다. Outlook 에 "프로그램이 전자 메일 정보에 액세스하려고 합니다" 확인 창이 뜨면 허용하세요.
+- Outlook `.msg` 파일은 `olefile` 패키지로 읽습니다 (`run.bat`/`run.sh` 가 자동 설치). 본문이 서식 있는 텍스트(RTF)로만 저장된 메일은
+  읽지 못하니 본문을 복사해 붙여 넣으세요.
+- WSL 에서는 Windows 탐색기에서 앱 창으로 끌어다 놓기가 되지 않을 수 있습니다. 그때는 [메일 불러오기] 나 [Outlook 선택 메일]을 쓰세요.

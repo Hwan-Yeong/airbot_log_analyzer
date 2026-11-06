@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from PySide6.QtCore import QDate, QDateTime, Qt, QTime, QTimer
+from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, Qt, QTime, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateTimeEdit, QDialog, QDialogButtonBox,
                                QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateTim
 from ..analysis import claude as ai
 from ..analysis import context as actx
 from ..analysis import excel as axl
+from ..analysis import outlook
 from ..analysis import request as areq
 from ..analysis import sources as asrc
 from ..analysis.masking import Masker
@@ -29,7 +30,33 @@ from .workers import BackgroundJob
 SOURCE_LABELS = [("amr", "AMR airbot_log"), ("ota", "AMR otalog"), ("journal", "AMR journal"), ("dmesg", "AMR dmesg"),
                  ("soc", "SoC logcat")]
 PLACEHOLDER = ("예) 11월 1일 오전 9시 반쯤 주방 가다가 낙하 에러(S07-2) 나고 멈췄다고 합니다. 낙하센서 불량 의심된다는데 "
-               "현상 정리 부탁해요.\n\n또는 요청 메일 본문을 그대로 붙여 넣거나 [메일 불러오기]로 .eml 파일을 여세요.")
+               "현상 정리 부탁해요.\n\n또는 요청 메일 본문을 붙여 넣거나, 메일 파일(.eml .msg .mht .html .txt)을 "
+               "이 창에 끌어다 놓거나, [Outlook 선택 메일]로 Outlook 에서 보고 있는 메일을 가져오세요.")
+
+
+def _local_files(mime) -> list:
+    return [u.toLocalFile() for u in mime.urls() if u.isLocalFile() and u.toLocalFile()] if mime.hasUrls() else []
+
+
+class _FileDrop(QObject):
+    """요청 입력 칸에 파일을 끌어다 놓으면 (경로 글자를 넣지 않고) 메일로 읽음. 글자 끌어다 놓기는 그대로."""
+
+    def __init__(self, target, on_files):
+        super().__init__(target)
+        self.on_files = on_files
+        target.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() in (QEvent.DragEnter, QEvent.DragMove) and _local_files(ev.mimeData()):
+            ev.acceptProposedAction()
+            return True
+        if ev.type() == QEvent.Drop:
+            files = _local_files(ev.mimeData())
+            if files:
+                ev.acceptProposedAction()
+                self.on_files(files)
+                return True
+        return False
 
 
 def _qdt(t: float) -> QDateTime:
@@ -63,7 +90,7 @@ class AnalysisDialog(QDialog):
                       (f" · 수집 {src.collected}" if src.collected else ""))
         lay.addWidget(head)
 
-        g1 = QGroupBox("1. 요청 내용 (구어체로 쓰거나 메일 본문 붙여넣기)")
+        g1 = QGroupBox("1. 요청 내용 (구어체로 쓰거나 메일 본문 붙여넣기 · 메일 파일 끌어다 놓기)")
         l1 = QVBoxLayout(g1)
         self.ed_request = QPlainTextEdit()
         self.ed_request.setPlaceholderText(PLACEHOLDER)
@@ -71,9 +98,16 @@ class AnalysisDialog(QDialog):
         l1.addWidget(self.ed_request)
         row = QHBoxLayout()
         b_mail = QPushButton("메일 불러오기…")
-        b_mail.setToolTip(".eml / .txt (Outlook 은 '다른 이름으로 저장 → .eml')")
+        b_mail.setToolTip("메일 파일: .eml .msg(Outlook) .mht .html .txt — 이 창에 끌어다 놓아도 됩니다\n"
+                          "여러 개를 고르면 이어 붙입니다")
         b_mail.clicked.connect(self.load_mail)
         row.addWidget(b_mail)
+        self.btn_outlook = QPushButton("Outlook 선택 메일")
+        self.btn_outlook.setToolTip("Outlook(클래식)에서 지금 보고 있는 메일을 가져옵니다\n"
+                                    "(메일 창이 앞에 있으면 그 메일, 목록이면 선택한 메일 · Outlook 실행 중이어야 함)")
+        self.btn_outlook.clicked.connect(self.fetch_outlook)
+        self.btn_outlook.setVisible(outlook.available())
+        row.addWidget(self.btn_outlook)
         self.hangul = HangulMode(self)
         self.btn_hangul = QPushButton("A")
         self.btn_hangul.setCheckable(True)
@@ -182,6 +216,8 @@ class AnalysisDialog(QDialog):
         self._extract_timer.timeout.connect(self.update_extract)
         self.ed_request.textChanged.connect(self._extract_timer.start)
         self._hangul_inputs = attach_hangul(self.hangul, self.ed_request, self.ed_words)
+        self.setAcceptDrops(True)                       # 메일 파일 끌어다 놓기 (창 어디든)
+        self._drop_filter = _FileDrop(self.ed_request.viewport(), self.load_mail_paths)
         self._preview = None
         self._set_busy(None)
         self.update_extract()
@@ -208,15 +244,65 @@ class AnalysisDialog(QDialog):
 
     # ------------------------------------------------------------ 요청
     def load_mail(self):
-        path, _ = QFileDialog.getOpenFileName(self, "요청 메일 열기", "", "메일 (*.eml *.msg *.txt);;모든 파일 (*)")
-        if not path:
-            return
+        paths, _ = QFileDialog.getOpenFileNames(self, "요청 메일 열기", "", areq.MAIL_FILTER)
+        if paths:
+            self.load_mail_paths(paths)
+
+    def load_mail_paths(self, paths) -> bool:
+        """메일 파일(여러 개면 이어 붙임) → 요청 내용. 형식은 내용으로 판별."""
         try:
-            self.request = areq.read_mail(path)
+            req = areq.read_mails(paths)
         except (OSError, ValueError) as e:
             QMessageBox.warning(self, "메일 열기 실패", str(e))
+            return False
+        self._set_request(req)
+        return True
+
+    def _set_request(self, req):
+        self.request = req
+        self.ed_request.setPlainText(areq.strip_signature(req.text))
+        self.raise_()
+        self.activateWindow()
+
+    def fetch_outlook(self):
+        if self._job is not None:
             return
-        self.ed_request.setPlainText(areq.strip_signature(self.request.text))
+        self._set_busy("Outlook 에서 메일 가져오는 중…")
+
+        def done(result):
+            self._set_busy(None)
+            self._job = None
+            req, count = result
+            self._set_request(req)
+            if count > 1:
+                QMessageBox.information(self, "Outlook 선택 메일",
+                                        f"Outlook 에서 {count}개를 선택해 첫 번째 메일만 가져왔습니다.\n"
+                                        "다른 메일이 필요하면 그 메일 하나만 선택한 뒤 다시 누르세요.")
+
+        def failed(msg):
+            self._set_busy(None)
+            self._job = None
+            QMessageBox.warning(self, "Outlook 선택 메일", msg)
+
+        self._job = BackgroundJob(lambda _progress: outlook.fetch_selected(), self)
+        self._job.on_done = done
+        self._job.on_failed = failed
+        self._job.start()
+
+    # ------------------------------------------------------------ 끌어다 놓기 (메일 파일)
+    def dragEnterEvent(self, e):
+        if _local_files(e.mimeData()):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if _local_files(e.mimeData()):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        files = _local_files(e.mimeData())
+        if files:
+            e.acceptProposedAction()
+            self.load_mail_paths(files)
 
     def update_extract(self):
         text = self.ed_request.toPlainText()

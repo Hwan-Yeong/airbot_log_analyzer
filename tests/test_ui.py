@@ -190,3 +190,99 @@ def test_analysis_dialog_flow(app, win, tmp_path, monkeypatch):
     assert out.exists() and out.stat().st_size > 5000
     res.close()
     dlg.close()
+
+
+def _mime(paths):
+    from PySide6.QtCore import QMimeData, QUrl
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+    return mime
+
+
+def _drop(handler, paths):
+    """파일 끌어다 놓기: 드래그 진입이 받아들여지는지 이벤트로 확인하고, 놓기는 처리기를 직접 호출.
+    (Qt 는 실제 드래그 중이 아니면 Drop 이벤트를 전달하지 않음)"""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QDragEnterEvent, QDropEvent
+    mime = _mime(paths)                 # 이벤트가 쓰는 동안 잡아 둠 (이벤트는 소유하지 않음 → 해제되면 비정상 종료)
+    target = getattr(handler, "__self__", None)
+    if isinstance(target, QtWidgets.QWidget):
+        enter = QDragEnterEvent(QPoint(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+        QtWidgets.QApplication.sendEvent(target, enter)
+        assert enter.isAccepted()
+    ev = QDropEvent(QPointF(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    handler(ev)
+    return ev
+
+
+def test_analysis_dialog_reads_dropped_mails(app, win, tmp_path):
+    """[분석] 창: 요청 칸이나 창 어디에 메일 파일을 놓아도 읽음 (.msg 포함, 여러 개면 이어 붙임)."""
+    from test_mail import _eml
+
+    from msgfile import make_msg
+    eml = tmp_path / "요청.eml"
+    eml.write_bytes(_eml("주방 이동 중 S07-2 발생"))
+    msg = tmp_path / "추가.msg"
+    msg.write_bytes(make_msg(subject="추가 문의", body="E09 도 확인 부탁"))
+    win.open_analysis()
+    dlg = win._analysis
+    from PySide6.QtGui import QDragEnterEvent
+    vp, mime = dlg.ed_request.viewport(), _mime([eml])
+    enter = QDragEnterEvent(QPoint(5, 5), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    QtWidgets.QApplication.sendEvent(vp, enter)
+    assert enter.isAccepted()                               # 요청 입력 칸 위에서도 파일을 받음
+    _drop(lambda ev: dlg._drop_filter.eventFilter(vp, ev), [eml])   # 경로 글자가 들어가지 않고 메일로 읽음
+    text = dlg.ed_request.toPlainText()
+    assert text.startswith("제목: [필드 이슈] 낙하 에러 검토") and "file://" not in text
+    assert "홍길동" in dlg.request.names
+    _drop(dlg.dropEvent, [eml, msg])                        # 창의 다른 곳, 두 개
+    text = dlg.ed_request.toPlainText()
+    assert "주방 이동 중 S07-2" in text and "E09 도 확인 부탁" in text
+    dlg.close()
+
+
+def test_main_window_routes_dropped_mail(app, demo_zip, settings, tmp_path, monkeypatch):
+    """메인 창: 메일만 놓으면 [분석] 창으로, 로그가 없으면 로그를 연 뒤 넣음 (로그와 함께 놓아도 같음)."""
+    from test_mail import _eml
+
+    from airbotlog.loader import load_session
+    from airbotlog.ui import main_window as mw
+    eml = tmp_path / "요청.eml"
+    eml.write_bytes(_eml("오전 9시 반쯤 낙하 에러"))
+    infos = []
+    monkeypatch.setattr(mw.QMessageBox, "information", lambda *a, **k: infos.append(a[2]))
+    w = mw.MainWindow(settings)
+    w.show()
+    _drop(w.dropEvent, [eml])                               # 로그 없음 → 대기
+    assert getattr(w, "_analysis", None) is None and "로그를 열면" in infos[-1]
+    w.set_session(load_session([demo_zip], w.ws, w.settings, w.rules))
+    assert w._analysis.isVisible() and "오전 9시 반쯤 낙하 에러" in w._analysis.ed_request.toPlainText()
+    w._analysis.ed_request.clear()
+    _drop(w.dropEvent, [eml])                               # 로그 있음 → 바로
+    assert "오전 9시 반쯤 낙하 에러" in w._analysis.ed_request.toPlainText()
+    w._analysis.close()
+    w.close()
+
+
+def test_outlook_button_fills_request(app, win, monkeypatch):
+    """[Outlook 선택 메일]: 작업 스레드에서 가져와 요청 칸을 채움 (여러 개 선택이면 안내)."""
+    from airbotlog.analysis import outlook
+    from airbotlog.analysis.request import Request
+    from airbotlog.ui import analysis_dialog as ad
+    infos = []
+    monkeypatch.setattr(ad.QMessageBox, "information", lambda *a, **k: infos.append(a[2]))
+    monkeypatch.setattr(outlook, "fetch_selected",
+                        lambda: (Request(text="제목: 선택 메일\n보낸 날짜: \n\n본문 S05", subject="선택 메일",
+                                         names=["홍길동"]), 3))
+    win.open_analysis()
+    dlg = win._analysis
+    dlg.fetch_outlook()
+    assert _wait(app, lambda: dlg._job is None, 10)
+    assert dlg.ed_request.toPlainText().startswith("제목: 선택 메일") and dlg.request.names == ["홍길동"]
+    assert "3개를 선택" in infos[-1]
+    monkeypatch.setattr(outlook, "fetch_selected", lambda: (_ for _ in ()).throw(outlook.OutlookError("실행 중이 아닙니다")))
+    warns = []
+    monkeypatch.setattr(ad.QMessageBox, "warning", lambda *a, **k: warns.append(a[2]))
+    dlg.fetch_outlook()
+    assert _wait(app, lambda: dlg._job is None, 10) and "실행 중이 아닙니다" in warns[-1]
+    dlg.close()
