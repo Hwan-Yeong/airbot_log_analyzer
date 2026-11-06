@@ -45,8 +45,11 @@ TIME_PATTERNS = [
     # 10-13 15:21
     ("md_dash", re.compile(r"(?<![\d-])(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?")),
     # 날짜 없는 시각 (같은 날 10시쯤 / 오후 3시 20분) → 바로 앞에 나온 날짜(없으면 수집일)
-    ("hm_kr", re.compile(r"(?<![\d:])(오전|오후)?\s*(\d{1,2})\s*시(?!간)\s*(?:(\d{1,2}|반)\s*분?)?")),
+    # 영문·숫자 바로 뒤('E09 시료', 'K00731 시')는 시각이 아님
+    ("hm_kr", re.compile(r"(?<![A-Za-z0-9:])(오전|오후)?\s*(\d{1,2})\s*시(?![간료작점])\s*(?:(\d{1,2}|반)\s*분?)?")),
 ]
+# 메일 머리글(보낸·받은 날짜) 줄의 시각은 발생 시각이 아님 (전달·회신 메일 본문에 여러 번 들어 있음)
+MAIL_DATE_LINE_RE = re.compile(r"(?im)^[ \t>]*(?:보낸\s*날짜|받은\s*날짜|보낸\s*시간|Date|Sent|Received)\s*[:：].*$")
 
 
 @dataclass
@@ -332,8 +335,9 @@ def _year_for(month, day, ref: datetime) -> int:
 
 
 def find_times(text: str, ref: datetime) -> list:
-    """요청 문장에서 시각 후보 (중복·겹침 제거, 등장 순서)."""
-    found, spans = [], []
+    """요청 문장에서 시각 후보 (중복·겹침 제거, 등장 순서). 메일 머리글의 보낸·받은 날짜 줄은 뺀다."""
+    found = []
+    spans = [m.span() for m in MAIL_DATE_LINE_RE.finditer(text)]
     for kind, rx in TIME_PATTERNS:
         for m in rx.finditer(text):
             if any(a < m.end() and m.start() < b for a, b in spans):

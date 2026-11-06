@@ -155,3 +155,32 @@ def test_outlook_fetch_runs_powershell(monkeypatch):
     req, count = outlook.fetch_selected()
     assert req.subject == "s" and count == 1
     assert calls[0][0] == "powershell.exe" and "-EncodedCommand" in calls[0]
+
+
+# ---------------------------------------------------------------- WSL 끌어다 놓기 창 (Windows 쪽 PowerShell 창)
+def test_drop_window_output(tmp_path):
+    from airbotlog import windrop
+    local = tmp_path / "요청.eml"
+    local.write_bytes(_eml())
+    nas_data = base64.b64encode(_eml("NAS 메일")).decode()
+    out = "\n".join([
+        "DROPFILE:" + json.dumps({"path": r"C:\Users\me\요청.eml", "name": "요청.eml"}, ensure_ascii=False),
+        "DROPFILE:" + json.dumps({"path": r"\\nas\share\b.eml", "name": "b.eml", "data": nas_data}),
+        "DROPFILE:" + json.dumps({"path": r"\\nas\share\big.zip", "name": "big.zip"}),
+        "DROPEND"])
+    res = windrop.parse_output(out, to_wsl=lambda p: str(local) if p.startswith("C:") else "")
+    try:
+        assert res.files[0] == str(local) and not res.outlook and res.skipped == [r"\\nas\share\big.zip"]
+        assert "NAS 메일" in areq.read_mail(res.files[1]).text          # 경로를 못 바꾸면 받은 내용으로 임시 파일
+    finally:
+        res.cleanup()
+    assert res.tmpdir is None
+    assert windrop.parse_output("DROPOUTLOOK\nDROPEND").outlook
+
+
+def test_drop_window_script_filled():
+    from airbotlog import windrop
+    plain = windrop.DropWindow("제목 '따옴표'", "안내").script()
+    assert "__" not in plain and "'제목 ''따옴표'''" in plain and "TEST_EFFECT" not in plain
+    test = windrop.DropWindow("t", "h", test_files=[r"C:\a.eml"], snapshot=r"C:\s.png").script()
+    assert "__" not in test and "SetFileDropList" in test and "DrawToBitmap" in test

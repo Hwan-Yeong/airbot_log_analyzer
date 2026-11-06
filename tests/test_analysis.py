@@ -95,6 +95,10 @@ def test_request_mail_and_extract(demo_zip):
     ("07/08 15시 31분 : 전원 ON", ["2026-07-08 15:31"]),
     ("2026년 9월 27일 오후 12:52", ["2026-09-27 12:52"]),
     ("약 2시간 동안 지속, 12월 30일 오후 11시", ["2025-12-30 23:00"]),
+    # 메일 머리글의 보낸·받은 날짜는 발생 시각이 아님 / 'E09 시료' 는 9시가 아님
+    ("보낸 날짜: 2026년 11월 6일 (목) 오후 1:00\n10월 23일 오전 3시 21분경 E09 발생", ["2026-10-23 03:21"]),
+    ("> Sent: 2026-11-06 13:00\n10/23 03:21 링크 끊김", ["2026-10-23 03:21"]),
+    ("제목: E09 시료 검토 (K00731 시료)", []),
 ])
 def test_time_patterns(text, expect):
     ref = request.datetime(2026, 11, 1, 15, 30)
@@ -254,3 +258,30 @@ def test_local_only_files_take_precedence(tmp_path):
     assert s.get("nas.root") == "LOCAL_ROOT" and s.get("playback.speed") == 10
     s.set_user("nas.root", "USER_ROOT")
     assert Settings(defaults_path=tmp_path / "settings.yaml", user_path=tmp_path / "user.yaml").get("nas.root") == "USER_ROOT"
+
+
+def test_excel_summary_event_raw_line_and_heights(session, tmp_path):
+    """구간 밖 요약 이벤트(EV)를 근거로 들어도 첫 발생 원문 줄·횟수를 넣고, 원문이 없으면 그렇다고 표시.
+    한글 긴 글은 행 높이를 넉넉히 (전각 문자 2칸)."""
+    openpyxl = pytest.importorskip("openpyxl")
+    from airbotlog.analysis import excel
+    late = max(session.tl_t) + 10 * 86400                              # 로그가 없는 구간
+    ctx = context.build_context(session, "요청", {}, context.Options(anchor=late, before=600, after=600))
+    assert ctx.counts["window"] == 0
+    ev = next(e for e in ctx.summary_events if e.code == "S07-2")
+    assert ev.rec is not None and "S07-2 (OCCURED)" in ev.rec.text
+    long_text = "주행 중 낙하 감지 후 목표 실패가 이어졌습니다. " * 15
+    res = _valid_result(rid="R99999", ev=ev.id)
+    res["phenomenon_detail"][0]["text"] = long_text
+    res["timeline"] = [dict(res["timeline"][0], evidence=[ev.id]),
+                       dict(res["timeline"][0], evidence=["EV999"], event="요약만 있는 항목", importance="참고")]
+    wb = openpyxl.load_workbook(excel.save(tmp_path / "out.xlsx", ctx, res, {}))
+    tl = wb["타임라인"]
+    assert tl["C5"].value == f"AMR {ev.rec.file}:L{ev.rec.line}" and tl["D5"].value.startswith(ev.rec.text)
+    assert tl["C6"].value == "AMR (원문 없음)" and tl["D6"].value.startswith("(원문 없음 · 요약)") and tl["D6"].font.i
+    summ = wb["요약"]
+    row = next(r for r in range(1, summ.max_row + 1) if str(summ.cell(r, 3).value or "").strip() == long_text.strip())
+    need = excel.text_lines(long_text, 110)
+    assert need >= 5 and summ.row_dimensions[row].height >= 15 * need
+    assert "A1:C1" in {str(m) for m in summ.merged_cells.ranges}             # 제목은 합쳐서 줄바꿈
+    assert excel.text_lines("가" * 110, 110) == 3 and excel.text_lines("a" * 90, 110) == 1

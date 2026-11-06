@@ -6,6 +6,7 @@
 시각은 날짜 포함 엑셀 날짜/시각 값(yyyy-mm-dd hh:mm:ss.000). 시트 간 수식 없음.
 """
 import re
+import unicodedata
 from datetime import datetime
 
 from ..model import fmt_time
@@ -37,6 +38,23 @@ def _dt(text: str):
 
 def _device(source: str) -> str:
     return "SoC" if (source or "").startswith("SoC") else "AMR"
+
+
+def text_lines(text, width: float) -> int:
+    """엑셀 열 너비(문자 수 단위)에서 줄바꿈되는 줄 수 추정 — 한글 등 전각 문자는 2칸."""
+    per_line = max(int(width * 0.88), 1)            # 맑은 고딕은 한 글자가 2칸보다 약간 넓음 → 여유
+    total = 0
+    for part in str(text if text is not None else "").split("\n"):
+        w = sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in part)
+        total += max(1, -(-w // per_line))
+    return total
+
+
+def _ev_note(e) -> str:
+    """요약 이벤트(구간 밖 포함)의 횟수·기간 표시."""
+    if getattr(e, "count", 1) > 1 and e.t_end is not None:
+        return f"(×{e.count}, {fmt_time(e.t, False)} ~ {fmt_time(e.t_end, False)})"
+    return ""
 
 
 def default_name(pattern: str, serial: str, issue: str, when: datetime = None) -> str:
@@ -81,9 +99,18 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
             put(ws, row, c, None, bg=SECTION_FILL)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncol)
 
-    def row_height(ws, row, *texts, width=110):
-        lines = max((sum(len(x) // width + 1 for x in str(t or "").split("\n")) for t in texts), default=1)
-        ws.row_dimensions[row].height = min(max(15 * lines, 18), 400)
+    def row_height(ws, row, *cells):
+        """cells: (글, 열 너비) — 가장 많이 줄바꿈되는 칸에 맞춤 (한글 폭 반영, 엑셀 최대 409)."""
+        lines = max((text_lines(t, w) for t, w in cells), default=1)
+        ws.row_dimensions[row].height = min(max(15 * lines + 3, 18), 409)
+
+    def banner(ws, row, text, ncol, width, **font):
+        """시트 위 제목·주석: 여러 열을 합쳐 줄바꿈 (긴 글이 한 칸에서 잘리거나 옆으로 넘치지 않게)."""
+        c = ws.cell(row=row, column=1, value=text)
+        c.font = Font(**font)
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ncol)
+        ws.row_dimensions[row].height = min(max(int(font.get("size", 11) * 1.4) * text_lines(text, width) + 3, 18), 409)
 
     rc = result.get("request_check", {}) or {}
     conf = result.get("confidence", {}) or {}
@@ -95,10 +122,9 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
     ws.title = "요약"
     for col, w in (("A", 6), ("B", 26), ("C", 110)):
         ws.column_dimensions[col].width = w
-    ws["A1"] = f"{title_prefix} {serial[-6:] if serial else ''} — {result.get('summary', '')}".replace("  ", " ")
-    ws["A1"].font = Font(bold=True, size=13)
-    ws["A2"] = f"AI 1차 분석(검토 전) · 시각은 AMR 로그 기준 · {datetime.now():%Y-%m-%d}"
-    ws["A2"].font = Font(color=NOTE_FONT)
+    banner(ws, 1, f"{title_prefix} {serial[-6:] if serial else ''} — {result.get('summary', '')}".replace("  ", " "),
+           3, 142 / 1.2, bold=True, size=13)
+    banner(ws, 2, f"AI 1차 분석(검토 전) · 시각은 AMR 로그 기준 · {datetime.now():%Y-%m-%d}", 3, 142, color=NOTE_FONT)
     r = 4
     claimed = rc.get("claimed_symptom", "") + (f"  (접수 시각 {rc['claimed_time']})" if rc.get("claimed_time") else "")
     actual = (rc.get("log_time") or "-") + (f"  — 접수 대비 {rc.get('match')}" if rc.get("match") else "") + \
@@ -108,7 +134,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
                          ("접수 현상", claimed), ("실제 발생", actual)):
         put(ws, r, 2, label, bold=True)
         put(ws, r, 3, value)
-        row_height(ws, r, value)
+        row_height(ws, r, (value, 110))
         r += 1
     r += 1
     section(ws, r, "[현상]", 3)
@@ -120,7 +146,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
         put(ws, r, 1, k)
         put(ws, r, 2, p.get("title", "") or "")
         put(ws, r, 3, text)
-        row_height(ws, r, text)
+        row_height(ws, r, (p.get("title", "") or "", 26), (text, 110))
         r += 1
     errs = result.get("error_codes", [])
     if errs:
@@ -134,6 +160,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
             put(ws, r, 1, e.get("code", ""), bold=True)
             put(ws, r, 2, e.get("name", ""))
             put(ws, r, 3, span)
+            row_height(ws, r, (e.get("code", ""), 6), (e.get("name", ""), 26), (span, 110))
             r += 1
     hyps = result.get("hypothesis_check", [])
     if hyps:
@@ -145,7 +172,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
             put(ws, r, 2, h.get("hypothesis", ""))
             v = f"[{h.get('verdict', '')}] {h.get('reason', '')}"
             put(ws, r, 3, v)
-            row_height(ws, r, v)
+            row_height(ws, r, (h.get("hypothesis", ""), 26), (v, 110))
             r += 1
     more = result.get("need_more_info", [])
     if more:
@@ -157,7 +184,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
             put(ws, r, 2, m.get("item", ""))
             v = (m.get("how", "") + (f"  (이유: {m['reason']})" if m.get("reason") else "")).strip()
             put(ws, r, 3, v)
-            row_height(ws, r, v)
+            row_height(ws, r, (m.get("item", ""), 26), (v, 110))
             r += 1
     for title in ("[원인]", "[대책]"):
         r += 1
@@ -168,40 +195,49 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
         put(ws, r, 3, "(사람 작성)", italic=True, color="808080")
         r += 1
     r += 1
-    note = ws.cell(row=r, column=1, value=f"※ 신뢰도 {conf.get('level', '-')}: {conf.get('reason', '')}")
-    note.font = Font(color=NOTE_FONT)
+    banner(ws, r, f"※ 신뢰도 {conf.get('level', '-')}: {conf.get('reason', '')}", 3, 142, color=NOTE_FONT)
 
     # ---------------------------------------------------------------- 타임라인
     ws = wb.create_sheet("타임라인")
     for col, w in (("A", 5), ("B", 22), ("C", 30), ("D", 90), ("E", 44)):
         ws.column_dimensions[col].width = w
-    ws["A1"] = "시간순 근거 로그 (실제 원문) — AMR 시계 기준"
-    ws["A1"].font = Font(bold=True, size=12)
-    ws["A2"] = ctx.offset.describe()
-    ws["A2"].font = Font(color=NOTE_FONT)
+    banner(ws, 1, "시간순 근거 로그 (실제 원문) — AMR 시계 기준", 5, 191 / 1.1, bold=True, size=12)
+    banner(ws, 2, ctx.offset.describe(), 5, 191, color=NOTE_FONT)
     header(ws, 4, ["No", "시각", "출처 (파일:줄)", "실제 로그 (원문)", "설명"])
-    rmap = ctx.rmap
+    rmap, emap = ctx.rmap, ctx.emap
     rr = 5
     for k, row in enumerate(result.get("timeline", []), 1):
         key = row.get("importance") == "핵심"
-        lines = [rmap[x] for x in row.get("evidence", []) if x in rmap]
-        if lines:       # 출처·원문은 앱이 보낸 근거 줄에서 직접 (반복으로 접힌 줄은 횟수·구간 표시)
-            dev = _device(lines[0].rec.src)
-            where = "\n".join(f"{_device(ln.rec.src)} {ln.rec.file}:L{ln.rec.line}" for ln in lines)
-            raw = "\n".join(ln.rec.text + (f"  {ln.note}" if ln.note else "") for ln in lines)
-        else:
+        # 출처·원문은 앱이 보낸 근거 줄(R)과 이벤트(EV)의 원문 줄에서 직접 — 반복으로 접힌 줄·요약 이벤트는 횟수·기간 표시
+        items, seen = [], set()
+        for x in row.get("evidence", []):
+            if x in rmap:
+                rec, note = rmap[x].rec, rmap[x].note
+            elif x in emap and emap[x].rec is not None:
+                rec, note = emap[x].rec, _ev_note(emap[x])
+            else:
+                continue
+            if id(rec) not in seen:
+                seen.add(id(rec))
+                items.append((rec, note))
+        missing = not items
+        if items:
+            dev = _device(items[0][0].src)
+            where = "\n".join(f"{_device(rec.src)} {rec.file}:L{rec.line}" for rec, _n in items)
+            raw = "\n".join(rec.text + (f"  {note}" if note else "") for rec, note in items)
+        else:           # 원문 줄이 없는 근거 (요약만 있는 이벤트) — 원문처럼 보이지 않게 표시
             dev = _device(row.get("source", ""))
-            where = f"{dev} {row.get('file_line', '')}".strip()
-            raw = row.get("event", "")
+            where = f"{dev} (원문 없음)"
+            raw = f"(원문 없음 · 요약) {row.get('event', '')}".strip()
         d = _dt(row.get("time", ""))
+        interp = ("★ " if key else "") + row.get("interpretation", "")
         put(ws, rr, 1, k, bg=KEY_FILL if key else None)
         put(ws, rr, 2, d if d is not None else row.get("time", ""), fmt=TIME_FMT if d is not None else None,
             bold=key, color=KEY_FONT if key else None, bg=KEY_FILL if key else None)
         put(ws, rr, 3, where, bg=SOC_FILL if dev == "SoC" else AMR_FILL)
-        put(ws, rr, 4, raw)
-        put(ws, rr, 5, ("★ " if key else "") + row.get("interpretation", ""), bold=key, color=KEY_FONT if key else None,
-            bg=KEY_FILL if key else None)
-        row_height(ws, rr, raw, width=90)
+        put(ws, rr, 4, raw, italic=missing, color="808080" if missing else None)
+        put(ws, rr, 5, interp, bold=key, color=KEY_FONT if key else None, bg=KEY_FILL if key else None)
+        row_height(ws, rr, (where, 30), (raw, 90), (interp, 44))
         rr += 1
     ws.freeze_panes = "C5"
     ws.auto_filter.ref = f"A4:E{max(rr - 1, 4)}"
@@ -210,8 +246,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
     ws = wb.create_sheet("로그 파일")
     for col, w in (("A", 30), ("B", 44), ("C", 60)):
         ws.column_dimensions[col].width = w
-    ws["A1"] = "분석 대상 로그 파일 및 기간"
-    ws["A1"].font = Font(bold=True, size=12)
+    banner(ws, 1, "분석 대상 로그 파일 및 기간", 3, 134 / 1.1, bold=True, size=12)
     header(ws, 3, ["대상", "기간 (AMR 시각 기준)", "비고"])
     groups = {}
     for st in ctx.stats:
@@ -235,7 +270,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
         put(ws, rr, 1, f"{src}\n{name}")
         put(ws, rr, 2, span)
         put(ws, rr, 3, "\n".join(notes))
-        row_height(ws, rr, "\n".join(notes), width=60)
+        row_height(ws, rr, (f"{src}\n{name}", 30), (span, 44), ("\n".join(notes), 60))
         rr += 1
     o = ctx.options
     rr += 1
@@ -245,7 +280,7 @@ def save(path, ctx, result: dict, meta: dict = None, title_prefix: str = "Airbot
         put(ws, rr, 1, label, bold=True, bg=SECTION_FILL)
         put(ws, rr, 2, value)
         ws.merge_cells(start_row=rr, start_column=2, end_row=rr, end_column=3)
-        row_height(ws, rr, value, width=100)
+        row_height(ws, rr, (value, 104))
         rr += 1
     wb.save(path)
     return path

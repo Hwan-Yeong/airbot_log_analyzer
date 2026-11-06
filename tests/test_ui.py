@@ -286,3 +286,96 @@ def test_outlook_button_fills_request(app, win, monkeypatch):
     dlg.fetch_outlook()
     assert _wait(app, lambda: dlg._job is None, 10) and "실행 중이 아닙니다" in warns[-1]
     dlg.close()
+
+
+class _FakeDropWindow:
+    """끌어다 놓기 창 대신 (정해 둔 결과를 돌려줌)."""
+    result = None
+
+    def __init__(self, *a, **k):
+        self.cancelled = False
+
+    def run(self):
+        return _FakeDropWindow.result
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def test_drop_window_and_outlook_drag_in_dialog(app, win, tmp_path, monkeypatch):
+    """WSL '끌어다 놓기 창'에 놓은 메일·Outlook 메일, Windows 에서 Outlook 목록에서 끌어온 메일."""
+    from test_mail import _eml
+
+    from airbotlog import windrop
+    from airbotlog.analysis import outlook
+    from airbotlog.analysis.request import Request
+    from airbotlog.ui import analysis_dialog as ad
+    eml = tmp_path / "요청.eml"
+    eml.write_bytes(_eml("창으로 받은 메일 본문"))
+    monkeypatch.setattr(ad.windrop, "DropWindow", _FakeDropWindow)
+    monkeypatch.setattr(outlook, "fetch_selected", lambda: (Request(text="제목: Outlook 끌어온 메일\n\n본문"), 1))
+    win.open_analysis()
+    dlg = win._analysis
+    _FakeDropWindow.result = windrop.DropResult(files=[str(eml)])
+    dlg.open_drop_window()
+    assert _wait(app, lambda: dlg._job is None, 10) and "창으로 받은 메일 본문" in dlg.ed_request.toPlainText()
+    _FakeDropWindow.result = windrop.DropResult(outlook=True)
+    dlg.open_drop_window()
+    assert _wait(app, lambda: dlg._job is None, 10) and dlg.ed_request.toPlainText().startswith("제목: Outlook 끌어온 메일")
+    dlg.ed_request.clear()
+    from PySide6.QtCore import QMimeData
+    from PySide6.QtGui import QDragEnterEvent
+    mime = QMimeData()                                       # Windows 의 Outlook 끌어오기 (파일 아님)
+    mime.setData('application/x-qt-windows-mime;value="FileGroupDescriptorW"', b"\0" * 8)
+    assert ad._is_outlook_drag(mime) and not ad._local_files(mime)
+    enter = QDragEnterEvent(QPoint(5, 5), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    QtWidgets.QApplication.sendEvent(dlg, enter)
+    assert enter.isAccepted()
+    dlg._handle_drop(mime)
+    assert _wait(app, lambda: dlg._job is None, 10) and dlg.ed_request.toPlainText().startswith("제목: Outlook 끌어온 메일")
+    dlg.close()
+
+
+def test_main_window_drop_window_routes(app, win, tmp_path, monkeypatch):
+    """메인 창 [끌어다 놓기] (WSL): 메일은 [분석] 창으로, 읽을 수 없는 파일은 안내."""
+    from test_mail import _eml
+
+    from airbotlog import windrop
+    from airbotlog.ui import main_window as mw
+    eml = tmp_path / "요청.eml"
+    eml.write_bytes(_eml("메인 창 끌어다 놓기 창"))
+    monkeypatch.setattr(mw.windrop, "DropWindow", _FakeDropWindow)
+    _FakeDropWindow.result = windrop.DropResult(files=[str(eml)])
+    win.open_drop_window()
+    assert _wait(app, lambda: win._drop_job is None, 10)
+    assert "메인 창 끌어다 놓기 창" in win._analysis.ed_request.toPlainText()
+    warns = []
+    monkeypatch.setattr(mw.QMessageBox, "warning", lambda *a, **k: warns.append(a[2]))
+    _FakeDropWindow.result = windrop.DropResult(skipped=[r"\\nas\share\x.zip"])
+    win.open_drop_window()
+    assert _wait(app, lambda: win._drop_job is None, 10) and "[NAS] 버튼" in warns[-1]
+    win._analysis.close()
+
+
+def test_analysis_anchor_prefers_log_period_and_confirms_empty_window(app, win, monkeypatch):
+    """기준 시각은 로그 기간 안의 시각 우선 (기간 밖 후보는 표시), 구간에 로그가 없으면 보내기 전에 확인."""
+    from airbotlog.ui import analysis_dialog as ad
+    win.open_analysis()
+    dlg = win._analysis
+    dlg.ed_request.setPlainText("11월 6일 오후 1시에 메일 드립니다. 11월 1일 오전 9시 반쯤 낙하 에러가 났습니다.")
+    dlg.update_extract()
+    assert dlg.dt_anchor.dateTime().toString("MM-dd HH:mm") == "11-01 09:30"
+    labels = [dlg.cmb_hint.itemText(i) for i in range(dlg.cmb_hint.count())]
+    assert any("로그 기간 밖" in t for t in labels) and dlg.cmb_hint.currentText().find("로그 기간 밖") < 0
+    from PySide6.QtCore import QDate, QDateTime, QTime
+    dlg.dt_anchor.setDateTime(QDateTime(QDate(2026, 11, 20), QTime(12, 0)))  # 로그 없는 구간
+    asked = []
+    monkeypatch.setattr(ad.QMessageBox, "question", lambda *a, **k: asked.append(a[2]) or ad.QMessageBox.No)
+    dlg.preview()
+    assert _wait(app, lambda: dlg._job is None, 30)
+    assert asked and "로그가 한 줄도 없습니다" in asked[-1] and dlg._preview is None
+    monkeypatch.setattr(ad.QMessageBox, "question", lambda *a, **k: ad.QMessageBox.Yes)
+    dlg.preview()
+    assert _wait(app, lambda: dlg._preview is not None, 30)
+    dlg._preview.close()
+    dlg.close()

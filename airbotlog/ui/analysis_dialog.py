@@ -19,10 +19,12 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateTim
 from ..analysis import claude as ai
 from ..analysis import context as actx
 from ..analysis import excel as axl
+from .. import windrop
 from ..analysis import outlook
 from ..analysis import request as areq
 from ..analysis import sources as asrc
 from ..analysis.masking import Masker
+from ..model import fmt_time
 from . import style
 from .hangul import HangulMode, attach as attach_hangul
 from .workers import BackgroundJob
@@ -34,28 +36,38 @@ PLACEHOLDER = ("예) 11월 1일 오전 9시 반쯤 주방 가다가 낙하 에�
                "이 창에 끌어다 놓거나, [Outlook 선택 메일]로 Outlook 에서 보고 있는 메일을 가져오세요.")
 
 
+DROP_HINT = "메일 파일(.eml .msg .mht .html .txt)이나\nOutlook 메일을 여기에 끌어다 놓으세요"
+
+
 def _local_files(mime) -> list:
     return [u.toLocalFile() for u in mime.urls() if u.isLocalFile() and u.toLocalFile()] if mime.hasUrls() else []
 
 
-class _FileDrop(QObject):
-    """요청 입력 칸에 파일을 끌어다 놓으면 (경로 글자를 넣지 않고) 메일로 읽음. 글자 끌어다 놓기는 그대로."""
+def _is_outlook_drag(mime) -> bool:
+    """Outlook 목록에서 끌어온 메일 (Windows 에서 직접 실행할 때: 파일이 아니라 Outlook 데이터로 옴)."""
+    return any("FileGroupDescriptor" in f or "RenPrivateMessages" in f for f in mime.formats())
 
-    def __init__(self, target, on_files):
+
+def _droppable(mime) -> bool:
+    return bool(_local_files(mime)) or _is_outlook_drag(mime)
+
+
+class _FileDrop(QObject):
+    """요청 입력 칸에 파일·Outlook 메일을 끌어다 놓으면 (경로 글자를 넣지 않고) 메일로 읽음. 글자 끌어다 놓기는 그대로."""
+
+    def __init__(self, target, on_drop):
         super().__init__(target)
-        self.on_files = on_files
+        self.on_drop = on_drop
         target.installEventFilter(self)
 
     def eventFilter(self, obj, ev):
-        if ev.type() in (QEvent.DragEnter, QEvent.DragMove) and _local_files(ev.mimeData()):
+        if ev.type() in (QEvent.DragEnter, QEvent.DragMove) and _droppable(ev.mimeData()):
             ev.acceptProposedAction()
             return True
-        if ev.type() == QEvent.Drop:
-            files = _local_files(ev.mimeData())
-            if files:
-                ev.acceptProposedAction()
-                self.on_files(files)
-                return True
+        if ev.type() == QEvent.Drop and _droppable(ev.mimeData()):
+            ev.acceptProposedAction()
+            self.on_drop(ev.mimeData())
+            return True
         return False
 
 
@@ -80,6 +92,8 @@ class AnalysisDialog(QDialog):
         self.request = areq.Request(text="")
         self.sset = asrc.discover(self.S)
         self.ref = asrc.reference_time(self.S)
+        real = [t for t in self.S.tl_t if t >= actx.STALE_BEFORE] or list(self.S.tl_t)
+        self.log_span = (min(real), max(real)) if real else None     # airbot_log 기간 (RTC 초기값 제외)
         self._job = None
         self._runner = None
         self.result_dialogs = []
@@ -108,6 +122,12 @@ class AnalysisDialog(QDialog):
         self.btn_outlook.clicked.connect(self.fetch_outlook)
         self.btn_outlook.setVisible(outlook.available())
         row.addWidget(self.btn_outlook)
+        self.btn_dropwin = QPushButton("끌어다 놓기 창")
+        self.btn_dropwin.setToolTip("WSL 에서는 이 창에 바로 끌어다 놓을 수 없어(WSLg 미지원) Windows 쪽에 작은 창을 띄웁니다.\n"
+                                    "그 창에 메일 파일이나 Outlook 메일을 놓으세요.")
+        self.btn_dropwin.clicked.connect(self.open_drop_window)
+        self.btn_dropwin.setVisible(windrop.available())
+        row.addWidget(self.btn_dropwin)
         self.hangul = HangulMode(self)
         self.btn_hangul = QPushButton("A")
         self.btn_hangul.setCheckable(True)
@@ -217,7 +237,7 @@ class AnalysisDialog(QDialog):
         self.ed_request.textChanged.connect(self._extract_timer.start)
         self._hangul_inputs = attach_hangul(self.hangul, self.ed_request, self.ed_words)
         self.setAcceptDrops(True)                       # 메일 파일 끌어다 놓기 (창 어디든)
-        self._drop_filter = _FileDrop(self.ed_request.viewport(), self.load_mail_paths)
+        self._drop_filter = _FileDrop(self.ed_request.viewport(), self._handle_drop)
         self._preview = None
         self._set_busy(None)
         self.update_extract()
@@ -272,12 +292,7 @@ class AnalysisDialog(QDialog):
         def done(result):
             self._set_busy(None)
             self._job = None
-            req, count = result
-            self._set_request(req)
-            if count > 1:
-                QMessageBox.information(self, "Outlook 선택 메일",
-                                        f"Outlook 에서 {count}개를 선택해 첫 번째 메일만 가져왔습니다.\n"
-                                        "다른 메일이 필요하면 그 메일 하나만 선택한 뒤 다시 누르세요.")
+            self._outlook_done(result)
 
         def failed(msg):
             self._set_busy(None)
@@ -289,32 +304,88 @@ class AnalysisDialog(QDialog):
         self._job.on_failed = failed
         self._job.start()
 
-    # ------------------------------------------------------------ 끌어다 놓기 (메일 파일)
+    def open_drop_window(self):
+        """WSL: Windows 쪽 '끌어다 놓기 창'을 띄워 거기 놓은 메일 파일·Outlook 메일을 받음."""
+        if self._job is not None:
+            return
+        dw = windrop.DropWindow("메일 끌어다 놓기 — 로그 분석", DROP_HINT)
+        self._set_busy("Windows 화면 가운데 '메일 끌어다 놓기' 창에 메일을 놓으세요…", on_cancel=dw.cancel)
+
+        def job(_progress):
+            res = dw.run()
+            try:
+                if res.outlook:
+                    return "outlook", outlook.fetch_selected()
+                if res.files:
+                    return "mail", areq.read_mails(res.files)
+                return "none", res.skipped
+            finally:
+                res.cleanup()
+
+        def done(result):
+            self._set_busy(None)
+            self._job = None
+            kind, value = result
+            if kind == "outlook":
+                self._outlook_done(value)
+            elif kind == "mail":
+                self._set_request(value)
+            elif value:
+                QMessageBox.warning(self, "끌어다 놓기", "읽을 수 없는 위치의 파일이라 가져오지 못했습니다:\n" + "\n".join(value))
+
+        def failed(msg):
+            self._set_busy(None)
+            self._job = None
+            QMessageBox.warning(self, "끌어다 놓기", msg)
+
+        self._job = BackgroundJob(job, self)
+        self._job.on_done = done
+        self._job.on_failed = failed
+        self._job.start()
+
+    def _outlook_done(self, result):
+        req, count = result
+        self._set_request(req)
+        if count > 1:
+            QMessageBox.information(self, "Outlook 선택 메일",
+                                    f"Outlook 에서 {count}개를 선택해 첫 번째 메일만 가져왔습니다.\n"
+                                    "다른 메일이 필요하면 그 메일 하나만 선택한 뒤 다시 하세요.")
+
+    # ------------------------------------------------------------ 끌어다 놓기 (메일 파일 · Outlook 메일)
+    def _handle_drop(self, mime):
+        files = _local_files(mime)
+        if files:
+            self.load_mail_paths(files)
+        elif _is_outlook_drag(mime):                # Outlook 목록에서 끌어온 메일 = 선택한 메일
+            self.fetch_outlook()
+
     def dragEnterEvent(self, e):
-        if _local_files(e.mimeData()):
+        if _droppable(e.mimeData()):
             e.acceptProposedAction()
 
     def dragMoveEvent(self, e):
-        if _local_files(e.mimeData()):
+        if _droppable(e.mimeData()):
             e.acceptProposedAction()
 
     def dropEvent(self, e):
-        files = _local_files(e.mimeData())
-        if files:
+        if _droppable(e.mimeData()):
             e.acceptProposedAction()
-            self.load_mail_paths(files)
+            self._handle_drop(e.mimeData())
 
     def update_extract(self):
         text = self.ed_request.toPlainText()
         ex = areq.extract(text, self.ref, self.S.source.serial if self.S.source else "")
         hints = areq.find_times(text, self.ref)
+        inside = [h for h in hints if self._in_log(h.when)]
         self.cmb_hint.clear()
         for h in hints:
-            self.cmb_hint.addItem(h.label(), h.when)
+            self.cmb_hint.addItem(h.label() + ("" if self._in_log(h.when) else "   ⚠ 로그 기간 밖"), h.when)
         if not hints:
             self.cmb_hint.addItem("(시각 언급 없음 — 기준 시각을 직접 지정)", None)
         if hints and text != getattr(self, "_last_text", None):
-            self._set_anchor(hints[0].when)
+            best = (inside or hints)[0]                  # 로그 기간 안의 첫 시각을 기준으로
+            self._set_anchor(best.when)
+            self.cmb_hint.setCurrentIndex(hints.index(best))
         self._last_text = text
         parts = []
         if ex["error_codes"]:
@@ -324,6 +395,12 @@ class AnalysisDialog(QDialog):
         if ex["symptom"]:
             parts.append("증상: " + ex["symptom"][:60])
         self.lbl_extract.setText(" · ".join(parts) or "")
+
+    def _in_log(self, when: datetime) -> bool:
+        if self.log_span is None:
+            return True
+        t = calendar.timegm(when.timetuple())
+        return self.log_span[0] - 3600 <= t <= self.log_span[1] + 3600
 
     def _hint_chosen(self, i):
         when = self.cmb_hint.itemData(i)
@@ -366,6 +443,8 @@ class AnalysisDialog(QDialog):
         def done(ctx):
             self._set_busy(None)
             self._job = None
+            if not ctx.counts.get("window") and not self._confirm_empty_window(ctx):
+                return
             self._show_preview(ctx, words)
 
         def failed(msg):
@@ -378,6 +457,19 @@ class AnalysisDialog(QDialog):
         self._job.on_done = done
         self._job.on_failed = failed
         self._job.start()
+
+    def _confirm_empty_window(self, ctx) -> bool:
+        """분석 구간에 로그가 한 줄도 없으면 (기준 시각이 로그 기간 밖 등) 보내기 전에 확인."""
+        o = ctx.options
+        span = (f"{fmt_time(self.log_span[0], False)} ~ {fmt_time(self.log_span[1], False)}"
+                if self.log_span else "-")
+        ans = QMessageBox.question(
+            self, "분석 구간에 로그 없음",
+            f"분석 구간 {fmt_time(o.t0, False)} ~ {fmt_time(o.t1, False)} 에 로그가 한 줄도 없습니다.\n"
+            f"이 시료의 airbot_log 기간: {span}\n\n"
+            "기준 시각(요청에 나온 시각·메일 날짜)을 확인하세요. 이대로 보내면 구간 밖 요약만으로 분석합니다.\n"
+            "그래도 미리보기로 갈까요?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return ans == QMessageBox.Yes
 
     def _show_preview(self, ctx, words):
         src = self.S.source
@@ -454,6 +546,8 @@ class AnalysisDialog(QDialog):
     def done(self, r):
         if self._runner is not None and self._job is not None:
             self._runner.cancel()
+        if self._job is not None and self._on_cancel is not None:   # 끌어다 놓기 창 등 진행 중인 작업 중단
+            self._on_cancel()
         if self._job is not None:
             self._job.detach()
             self._job = None

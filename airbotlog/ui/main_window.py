@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QGridLayout, 
                                QMenu, QProgressBar, QScrollArea, QSizePolicy, QSplitter, QStyle, QTabWidget,
                                QToolBar, QToolButton, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__
+from .. import APP_NAME, __version__, windrop
 from ..analysis import request as areq
 from ..loader import load_session
 from ..mapdata import load_map
@@ -75,7 +75,9 @@ class MainWindow(QMainWindow):
         self.ws = Workspace(self.settings.get("workspace.temp_root") or None)
         Workspace.cleanup_stale(self.settings.get("workspace.temp_root") or None)
         self.session = None
-        self._pending_mails = None      # 로그와 함께 끌어다 놓은 메일 (로그를 연 뒤 [분석] 창에 넣음)
+        self._pending_mails = None      # 로그와 함께 끌어다 놓은 메일 (로그를 연 뒤 [분석] 창에 넣음), "outlook" 가능
+        self._drop_job = None
+        self._drop_tmp = []             # 끌어다 놓기 창에서 받은 임시 파일 (종료 시 삭제)
         self.vt = 0.0
         self.playing = False
         self.speed = float(self.settings.get("playback.speed", 10))
@@ -219,6 +221,10 @@ class MainWindow(QMainWindow):
         act(QStyle.SP_DialogOpenButton, "열기", self.open_files, "Ctrl+O", "로그 압축 파일(zip/tar.gz) 또는 airbot_log*.txt 열기")
         act(QStyle.SP_DirOpenIcon, "폴더 열기", self.open_folder, "Ctrl+Shift+O", "압축이 풀린 로그 폴더 열기")
         act(QStyle.SP_DriveNetIcon, "NAS", self.open_nas, "Ctrl+N", "NAS 로그 폴더에서 불러오기 (읽기 전용)")
+        if windrop.available():          # WSL: 앱 창에 바로 끌어다 놓을 수 없음 (WSLg 미지원)
+            act(QStyle.SP_ArrowDown, "끌어다 놓기", self.open_drop_window, None,
+                "Windows 쪽에 작은 창을 띄워, 거기에 놓은 로그·메일 파일이나 Outlook 메일을 받습니다\n"
+                "(WSL 에서는 이 창에 바로 끌어다 놓을 수 없음)")
         tb.addSeparator()
         act(QStyle.SP_FileDialogContentsView, "맵 교체", self.replace_map, None, "다른 맵 폴더/압축으로 교체")
         act(QStyle.SP_DialogSaveButton, "화면 저장", self.export_png, "Ctrl+S", "현재 맵 화면을 PNG 로 저장")
@@ -353,7 +359,9 @@ class MainWindow(QMainWindow):
         self._apply_display()
         self.set_vt(0.0, "seek")
         mails, self._pending_mails = self._pending_mails, None
-        if mails:                                         # 로그와 함께 끌어다 놓은 메일 → [분석] 창에 넣음
+        if mails == "outlook":                            # 로그를 열기 전에 끌어다 놓은 Outlook 메일
+            self.open_analysis(outlook_mail=True)
+        elif mails:                                       # 로그와 함께 끌어다 놓은 메일 → [분석] 창에 넣음
             self.open_analysis(mails)
 
     def _timeline_marks(self, S):
@@ -658,10 +666,10 @@ class MainWindow(QMainWindow):
                             S.files[e.fi].name, e.ln + 1])
         self.statusBar().showMessage(f"저장: {path}", 4000)
 
-    def open_analysis(self, mails=None):
+    def open_analysis(self, mails=None, outlook_mail=False):
         if self.session is None:
-            if mails:
-                self._pending_mails = list(mails)
+            if mails or outlook_mail:
+                self._pending_mails = list(mails) if mails else "outlook"
                 QMessageBox.information(self, "분석", "먼저 로그를 불러오세요.\n"
                                         "로그를 열면 끌어다 놓은 메일을 [분석] 창에 바로 넣습니다.")
             else:
@@ -675,6 +683,8 @@ class MainWindow(QMainWindow):
         dlg.raise_()
         if mails:
             dlg.load_mail_paths(mails)
+        elif outlook_mail:
+            dlg.fetch_outlook()
 
     def edit_nas_path(self):
         NasPathDialog(self.settings, self).exec()
@@ -690,15 +700,23 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ 드래그앤드롭/종료
     def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls():
+        from .analysis_dialog import _is_outlook_drag
+        if e.mimeData().hasUrls() or _is_outlook_drag(e.mimeData()):
             e.acceptProposedAction()
 
     def dropEvent(self, e):
+        from .analysis_dialog import _is_outlook_drag
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.toLocalFile()]
-        if not paths:
-            return
-        e.acceptProposedAction()
-        mails = [p for p in paths if areq.is_mail_file(p)]      # 메일 파일은 [분석] 창으로, 나머지는 로그로
+        if paths:
+            e.acceptProposedAction()
+            self.open_dropped(paths)
+        elif _is_outlook_drag(e.mimeData()):                   # Outlook 목록에서 끌어온 메일
+            e.acceptProposedAction()
+            self.open_analysis(outlook_mail=True)
+
+    def open_dropped(self, paths):
+        """끌어다 놓은 파일: 메일은 [분석] 창으로, 나머지는 로그로 (로그와 함께면 로그를 연 뒤 메일)."""
+        mails = [p for p in paths if areq.is_mail_file(p)]
         logs = [p for p in paths if p not in mails]
         if logs:
             self._pending_mails = mails or None
@@ -706,8 +724,47 @@ class MainWindow(QMainWindow):
         else:
             self.open_analysis(mails)
 
+    def open_drop_window(self):
+        """WSL: Windows 쪽 '끌어다 놓기 창'에 놓은 로그·메일 파일이나 Outlook 메일을 받음."""
+        if self._drop_job is not None:
+            self.statusBar().showMessage("이미 '끌어다 놓기' 창이 열려 있습니다 (Windows 화면 가운데).", 5000)
+            return
+        dw = windrop.DropWindow("끌어다 놓기 — 로그 분석",
+                                "로그 압축(zip·tar.gz)·airbot_log, 메일 파일이나\nOutlook 메일을 여기에 끌어다 놓으세요")
+        self.statusBar().showMessage("Windows 화면 가운데 '끌어다 놓기' 창에 로그나 메일을 놓으세요.")
+        self._drop_window = dw
+        self._drop_job = BackgroundJob(lambda _progress: dw.run(), self)
+
+        def done(res):
+            self._drop_job = None
+            self.statusBar().clearMessage()
+            if res.tmpdir is not None:
+                self._drop_tmp.append(res)
+            if res.outlook:
+                self.open_analysis(outlook_mail=True)
+            elif res.files:
+                self.open_dropped(res.files)
+            elif res.skipped:
+                QMessageBox.warning(self, "끌어다 놓기", "읽을 수 없는 위치의 파일이라 가져오지 못했습니다:\n"
+                                    + "\n".join(res.skipped) + "\n(NAS 로그는 [NAS] 버튼으로 여세요)")
+
+        def failed(msg):
+            self._drop_job = None
+            self.statusBar().clearMessage()
+            QMessageBox.warning(self, "끌어다 놓기", msg)
+
+        self._drop_job.on_done = done
+        self._drop_job.on_failed = failed
+        self._drop_job.start()
+
     def closeEvent(self, e):
         self.pause()
+        if self._drop_job is not None:                    # 열려 있는 끌어다 놓기 창 닫기
+            self._drop_window.cancel()
+            self._drop_job.detach()
+            self._drop_job = None
+        for res in self._drop_tmp:
+            res.cleanup()
         if self._prefs_timer.isActive():   # 저장 대기 중인 표시 설정은 닫기 전에 저장
             self._prefs_timer.stop()
             self._write_view_prefs()

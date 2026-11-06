@@ -109,6 +109,10 @@ class Context:
     meta: dict = field(default_factory=dict)
 
     @property
+    def emap(self) -> dict:
+        return {e.id: e for e in self.window_events + self.summary_events}
+
+    @property
     def rmap(self) -> dict:
         return {ln.rid: ln for ln in self.lines if ln.rec is not None}
 
@@ -500,31 +504,53 @@ def _select(items, options: Options, event_recs):
     return out, len(items) - len(chosen)
 
 
+def _session_rec(S, e) -> Rec:
+    """airbot_log 이벤트(세션) → 원문 줄 Rec (구간 밖 요약 이벤트의 첫 발생 줄 표시용)."""
+    try:
+        return Rec(e.t, srcs.SRC_AMR, S.files[e.fi].name, e.ln + 1, S.line_text(e.fi, e.ln))
+    except (IndexError, AttributeError):
+        return None
+
+
 def _summary_events(S, events, start=0):
-    """로그 전체 요약: 에러 코드별 발생 횟수·처음/마지막, 부팅, 링크·재부팅 등 (구간 밖 포함)."""
+    """로그 전체 요약: 에러 코드별 발생 횟수·처음/마지막, 부팅, 링크·재부팅 등 (구간 밖 포함).
+    각 요약 항목에는 첫 발생 줄(rec)을 붙여 엑셀·결과에서 원문을 보여 준다."""
     out = []
     occ = defaultdict(list)
+    first = {}
     for e in S.error_events:
         st = (e.data or {}).get("status")
         if st == "OCCURRED":
-            occ[(srcs.SRC_AMR, e.data.get("code", "?"))].append(e.t)
+            key = (srcs.SRC_AMR, e.data.get("code", "?"))
+            occ[key].append(e.t)
+            if key not in first or e.t < first[key][0]:
+                first[key] = (e.t, e)
     for e in events:
         if e.type == "error_occur" and e.src != srcs.SRC_AMR:     # airbot_log 에러는 위에서 전체를 셈
-            occ[(e.src, e.code or "?")].append(e.t)
+            key = (e.src, e.code or "?")
+            occ[key].append(e.t)
+            if key not in first or e.t < first[key][0]:
+                first[key] = (e.t, e)
     for (src, code), ts in sorted(occ.items(), key=lambda kv: min(kv[1])):
-        out.append(Event(min(ts), src, "error_occur", code, f"{code} 발생", "error", t_end=max(ts), count=len(ts)))
+        fe = first[(src, code)][1]
+        rec = fe.rec if isinstance(fe, Event) else _session_rec(S, fe)
+        out.append(Event(min(ts), src, "error_occur", code, f"{code} 발생", "error", rec=rec, t_end=max(ts),
+                         count=len(ts)))
     kinds = Counter()
     span = {}
+    first_rec = {}
     for e in events:
         if e.type in ("boot", "link", "net", "timeout", "ota", "crash", "restart", "collect"):
             key = (e.src, e.type, e.text)
             kinds[key] += 1
             a, b = span.get(key, (e.t, e.t))
             span[key] = (min(a, e.t), max(b, e.t))
+            if key not in first_rec or e.t < first_rec[key][0]:
+                first_rec[key] = (e.t, e.rec)
     for key, n in sorted(kinds.items(), key=lambda kv: span[kv[0]][0]):
         src, typ, text = key
         a, b = span[key]
-        out.append(Event(a, src, typ, "", text, "info", t_end=b, count=n))
+        out.append(Event(a, src, typ, "", text, "info", rec=first_rec[key][1], t_end=b, count=n))
     for k, e in enumerate(out):
         e.id = f"EV{start + k + 1:03d}"
     return out
