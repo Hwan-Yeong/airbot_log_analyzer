@@ -11,6 +11,11 @@
 
 - 실행 스크립트가 `.venv`를 만들고 `requirements.txt`를 설치합니다.
 - 로그를 인자로 주면 바로 엽니다: `./run.sh 로그.zip`
+- **WSL: Windows 바탕화면 아이콘** — 한 번만 `./scripts/install_shortcut.sh` 를 실행하면 바탕화면과 시작 메뉴에 아이콘이 생깁니다.
+  아이콘을 누르면 터미널 없이 바로 실행됩니다 (`wslg.exe` → `scripts/wsl_launch.sh` → `run.sh`, 콘솔 창 없음).
+  - 처음 실행·업데이트 직후 패키지 설치로 오래 걸리면 Windows 알림으로 알려 주고, 실행에 실패하면 로그 위치를 알려 줍니다
+    (로그: `~/.cache/airbot-log-analyzer/launch.log`).
+  - 폴더를 옮겼으면 다시 실행하세요. 지우기: `./scripts/install_shortcut.sh --remove`
 - 직접 설치: `pip install -r requirements.txt` 후 `python run.py`
 
 ## 2. NAS 연결 (읽기 전용)

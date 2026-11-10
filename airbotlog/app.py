@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 
 from . import APP_NAME, __version__
-from .settings import user_cache_dir
+from .settings import APP_ID, user_cache_dir
 
 _crash_file = None
 
@@ -64,6 +64,9 @@ def main(argv=None):
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
+    app.setDesktopFileName(APP_ID)                        # 리눅스 앱 항목(.desktop)과 연결 → 작업 표시줄 아이콘
+    from .ui.appicon import app_icon
+    app.setWindowIcon(app_icon())
     settings = Settings()
     apply_style(app, settings.get("display.theme", "light"))
     if not binding_ok():

@@ -27,6 +27,7 @@
 |---|---|
 | Windows | `run.bat` 더블클릭 |
 | Linux / WSL | `./run.sh` |
+| WSL — Windows 바탕화면 아이콘 | 한 번 `./scripts/install_shortcut.sh` → 이후 바탕화면·시작 메뉴 아이콘으로 실행 |
 
 처음 실행할 때 `.venv`를 만들고 필요한 패키지를 설치합니다 (수 분). 자세한 내용은 [설치 및 NAS 연결](docs/SETUP.md).
 

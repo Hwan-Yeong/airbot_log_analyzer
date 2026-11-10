@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Airbot Log Analyzer 실행 (Linux / WSL)
 #   최초 실행 시 .venv 를 만들고 requirements.txt 를 설치한다 (requirements 가 바뀌면 다시 설치).
-#   사용: ./run.sh [로그 압축/폴더 ...]
+#   사용: ./run.sh [로그 압축/폴더 ...]      ./run.sh --setup-only  (.venv 준비만)
 set -e
 cd "$(dirname "$0")"
 unset PYTHONPATH            # ROS 등 외부 패키지 경로가 섞이지 않도록 격리
@@ -19,6 +19,9 @@ if [ ! -x .venv/bin/python ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$REQ_HASH" ]
   .venv/bin/python -m pip install -q --upgrade pip
   .venv/bin/python -m pip install -q -r requirements.txt
   echo "$REQ_HASH" > "$STAMP"
+fi
+if [ "${1:-}" = "--setup-only" ]; then
+  exit 0
 fi
 # WSL(WSLg) 은 기본 wayland 로 실행 (X11 에서는 WSLg 가 마우스 포인터를 표시하지 않음 - Tk 등 일반 X11 앱도 동일)
 # X11 로 실행하려면: QT_QPA_PLATFORM=xcb ./run.sh  (필요한 라이브러리·커서 테마는 sudo 없이 .venv 에 자동 준비)
